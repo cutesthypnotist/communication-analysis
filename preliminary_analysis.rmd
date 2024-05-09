@@ -1,0 +1,441 @@
+
+Package installation
+```{r}
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("readr")
+install.packages("pwr")
+install.packages("fs")
+install.packages("purrr")
+install.packages("data.table")
+install.packages("janitor")
+install.packages("magrittr")
+install.packages("tidyverse")
+install.packages("stringr")
+```
+
+Initialize commonly used libraries, variables, and functions.
+```{r}
+
+library(tidyr)
+library(fs)
+library(dplyr)
+library(readr)
+library(purrr)
+library(data.table)
+library(pwr)
+library(janitor)
+library(magrittr)
+library(tidyverse)
+library(stringr)
+
+# TODO: When we actually get around to analyzing the data, we need to create separate directories for 'good data',
+# 'bad data', and 'output files' to keep things organized.
+
+path_to_files <- "C:\\DataTest\\"
+#path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
+
+na_strings <- c("NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "NaN", "nan", "Inf", "-Inf", "inf", "-inf", "", " ")
+names_with_indices <- function(data) {
+  names_data <- names(data)
+  indices <- seq_along(names_data)
+  names_indexed <- paste(indices, names_data, sep = ": ")
+  return(names_indexed)
+}
+# Function to fix the header and write a new CSV file
+fix_csv_header_id <- function(file_path) {
+  # Read the first line to check headers
+  con <- file(file_path, open = "r")
+  first_line <- readLines(con, n = 1)
+  close(con)
+  
+  # Append ',id' to the first line
+  corrected_first_line <- paste(first_line, "id", sep = ",")
+  
+  # Read the remaining lines of the original file
+  remaining_lines <- read_lines(file_path, skip = 1)
+  
+  # Combine the corrected first line with the remaining lines
+  corrected_content <- c(corrected_first_line, remaining_lines)
+  
+  # Define the new file path
+  new_file_path <- paste0(sub(".csv", "", file_path), "_fixed.csv")
+  
+  # Write the corrected content to the new file
+  writeLines(corrected_content, new_file_path)
+  
+  return(new_file_path)
+}
+
+# Function to fix the header and write a new CSV file with additional columns
+fix_csv_header_cols <- function(file_path, additional_columns, suffix = "_fixed.csv") {
+  # Read the first line to check headers
+  con <- file(file_path, open = "r")
+  first_line <- readLines(con, n = 1)
+  close(con)
+  
+  # Append additional columns to the first line
+  corrected_first_line <- paste(first_line, additional_columns, sep = ",")
+  
+  # Read the remaining lines of the original file
+  remaining_lines <- read_lines(file_path, skip = 1)
+  
+  # Combine the corrected first line with the remaining lines
+  corrected_content <- c(corrected_first_line, remaining_lines)
+  
+  # Define the new file path
+  new_file_path <- paste0(sub(".csv", "", file_path), suffix)
+  
+  # Write the corrected content to the new file
+  writeLines(corrected_content, new_file_path)
+  
+  return(new_file_path)
+}
+```
+
+
+
+Test to fix missing column headers using function with parameters.
+
+```{r}
+path_to_files <- "C:\\DataTest\\"
+files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = ".*[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating\\.csv$") %>%
+  map(.f = function(file) {
+    #cols_to_add <- "id"
+    cols_to_add <- "id,rating,bwap,round_id,subject_id,gaze_condition,task_condition"
+    suffix <- "_test.csv"
+    #suffix <- "_fixed.csv"
+    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
+  })
+files_fixed
+path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
+```
+
+
+Fix the missing column headers
+```{r}
+files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = ".*[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating\\.csv$") %>%
+  map(.f = function(file) {
+    #cols_to_add <- "id"
+    cols_to_add <- "id,rating,bwap,round_id,subject_id,gaze_condition,task_condition"
+    suffix <- "_test.csv"
+    #suffix <- "_fixed.csv"
+    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
+  })
+files_fixed
+```
+
+
+
+Find the ones that are still in the older format.
+```{r}
+subject_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating_fixed\\.csv$") %>%
+  map_dfr(.f = function(subjects_file) {
+    print(subjects_file)
+    subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names()
+    subject_row
+  }) 
+
+subject_ratings <- subject_ratings %>% filter(round_id != 9) %>% mutate(subject_id = substr(subject_id, 1, 7))
+
+# Ensure subject_ratings is a data frame
+subject_ratings <- as.data.frame(subject_ratings)
+
+
+test <- subject_ratings %>% filter(question == "How effective was your guidance in improving the student's focus?")
+test
+
+
+# Add a new column 'renamed_question' and fill it based on conditions
+test2 <- subject_ratings %>%
+  mutate(renamed_question = question) %>%  # Initialize with existing questions
+  mutate(renamed_question = ifelse(grepl("Question - How confident were you in correctly guessing", question), "Confident", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How easy was it to guide", question), "Ease", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How well were you able to predict", question), "Predict", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How would you rate your understanding", question), "Focus", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How would you rate your awareness", question), "Awareness", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How complex were your instructions when guiding", question), "Complex", renamed_question))
+
+
+test3 <- test2 %>% group_by(subject_id, question) %>% summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
+
+test4 <- test3 %>% filter(question == "Question - How confident did you feel")
+test4
+
+```
+
+
+
+```{r}
+
+subject_ratings 
+
+
+aggregated_ratings <- subject_ratings %>%
+  mutate(renamed_question = question) %>%  # Initialize with existing questions
+  mutate(renamed_question = ifelse(grepl("Question - How confident were you in correctly guessing", question), "Confident", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How easy was it to guide", question), "Ease", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How well were you able to predict", question), "Predict", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How would you rate your understanding", question), "Focus", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How would you rate your awareness", question), "Awareness", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How complex were your instructions when guiding", question), "Complex", renamed_question)) %>%
+  group_by(subject_id, renamed_question, gaze_condition) %>%
+  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
+  
+  aggregated_ratings
+  # Split the data frame by question
+  questions_list <- split(aggregated_ratings, aggregated_ratings$renamed_question)
+
+  # Function to create and save a boxplot and scatter plot for each question
+  plot_question <- function(data, question_name) {
+    p <- ggplot(data, aes(x = gaze_condition, y = mean_rating, fill = gaze_condition)) +
+      geom_boxplot(alpha = 0.5) +  # Set transparency to see scatter points clearly
+      geom_point(position = position_jitter(width = 0.1), color = "black", size = 3, alpha = 0.6) +  # Add jitter to avoid overplotting
+      labs(title = question_name, x = "Gaze Condition", y = "Mean Rating") +
+      theme_classic() +
+      scale_y_continuous(limits = c(1, 5), oob = scales::oob_squish)  # Force all data into the specified range
+
+    # Save the plot
+    ggsave(paste0("Boxplot_Scatter_", question_name, ".png"), plot = p, width = 10, height = 8, dpi = 300)
+  }
+
+  # Apply the function to each item in the list
+  lapply(names(questions_list), function(q) {
+    plot_question(questions_list[[q]], q)
+  })
+```
+
+
+Not sure but I think this chunk doesn't work.
+```{r}
+
+# Add a new column 'renamed_question' with the shortened question text
+subject_ratings <- subject_ratings %>%
+  mutate(renamed_question = case_when(
+    grepl("How effective was your guidance in improving", question) ~ "Effectiveness",
+    grepl("How easy was it to guide and correct ", question) ~ "Ease",
+    grepl("How efficiently could you guide and correct the ", question) ~ "Efficiency",
+    grepl("How would you rate your understanding of the student's focus", question) ~ "Focus",
+    grepl("How would you rate your awareness about the student's", question) ~ "Awareness",
+    grepl("How confident did you feel", question) ~ "Confidence",
+    TRUE ~ question
+  ))
+
+# Now perform the aggregation using the new 'renamed_question' column
+aggregated_ratings <- subject_ratings %>%
+  filter(round_id != 9) %>%
+  group_by(subject_id = substr(subject_id, 1, 7), renamed_question, gaze_condition) %>%
+  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
+
+
+aggregated_ratings
+# Add a new column 'renamed_question' with the shortened question text
+subject_ratings[, renamed_question := fcase(
+  grepl("How effective was your guidance in improving", question), "Effectiveness",
+  grepl("How easy was it to guide and correct ", question), "Ease",
+  grepl("How efficiently could you guide and correct the ", question), "Efficiency",
+  grepl("How would you rate your understanding of the student's focus", question), "Focus",
+  grepl("How would you rate your awareness about the student's", question), "Awareness",
+  grepl("How confident did you feel", question), "Confidence",
+  default = question
+)]
+
+
+
+# Now perform the aggregation using the new 'renamed_question' column
+aggregated_ratings <- subject_ratings[round_id != 9, 
+  .(mean_rating = mean(rating, na.rm = TRUE)), 
+  by = .(subject_id = substr(subject_id, 1, 7), renamed_question, gaze_condition)
+]
+
+
+aggregated_ratings <- subject_ratings %>%
+  dplyr::filter(round_id != 9) %>%
+  group_by(subject_id, question, gaze_condition) %>%
+  mutate(subject_id = substr(subject_id, 1, 7),
+         question = str_replace_all(question, "Question - How effective was your guidance in improving", "Effectiveness"),
+         question = str_replace_all(question, "Question - How easy was it to guide and correct ", "Ease"),
+         question = str_replace_all(question, "Question - How efficiently could you guide and correct the ", "Efficiency"),
+         question = str_replace_all(question, "Question - How would you rate your understanding of the student's focus", "Focus"),
+         question = str_replace_all(question, "Question - How would you rate your awareness about the student's", "Awareness"),
+         question = str_replace_all(question, "Question - How confident did you feel", "Confidence")) %>%
+  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
+  
+
+aggregated_ratings
+
+# Split the data frame by question
+questions_list <- split(aggregated_ratings, aggregated_ratings$question)
+
+# Function to create and save a boxplot for each question
+plot_question <- function(data, question_name) {
+  p <- ggplot(data, aes(x = gaze_condition, y = mean_rating, fill = gaze_condition)) +
+    geom_boxplot() +
+    labs(title = question_name, x = "Gaze Condition", y = "Mean Rating") +
+    theme_minimal()
+  
+  # Save the plot
+  ggsave(paste0("Boxplot_", question_name, ".png"), plot = p, width = 10, height = 8, dpi = 300)
+}
+
+# Apply the function to each item in the list
+lapply(names(questions_list), function(q) {
+  plot_question(questions_list[[q]], q)
+})
+
+```
+
+
+
+
+For each subject we want to figure out their mean rating for each gaze condition. Also we want to only take the first 7 characters of the subject ID.
+```{r}
+
+subject_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating_fixed\\.csv$") %>%
+  map_dfr( .f = function(subjects_file) {
+    print(subjects_file)
+    subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names()
+    subject_row
+  }) 
+
+subject_ratings
+
+aggregated_ratings <- subject_ratings %>%
+  dplyr::filter(round_id != 9) %>%
+  group_by(subject_id, question, gaze_condition) %>%
+  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop") %>%
+  mutate(subject_id = substr(subject_id, 1, 7))
+aggregated_ratings
+
+write_csv(aggregated_ratings, paste0(path_to_files, "aggregated_ratings.csv"))
+```
+
+
+```{r}
+aggregated_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating_fixed\\.csv$") %>%
+  map_dfr(.f = function(subjects_file) {
+    print(subjects_file)
+    subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names()
+    subject_row
+  }) %>%
+  filter(round_id != 9) %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop") %>%
+  mutate(subject_id = substr(subject_id, 1, 7)) %>%
+  pivot_wider(names_from = gaze_condition, values_from = mean_rating) %>%
+  mutate(difference = `Off` - `On`)
+
+# Add a column to indicate positive or negative difference
+aggregated_ratings <- aggregated_ratings %>%
+  mutate(difference_sign = ifelse(difference > 0, "Positive", "Negative"))
+
+aggregated_ratings
+```
+
+
+
+Step 1 of counterbalancing strategy in the user study where we generate count of each order experienced. This mitigates order effects (such as subjects improving by repetition or performing worse due to fatigue), reduces variability from order and carryover effects, and allows for easier advanced analysis (e.g. ANOVA), thus increasing the likelihood of detecting significant effects.
+```{r}
+
+merge_subjects <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "participantData\\.csv$") %>%
+  map_dfr( .f = function(subjects_file) {
+    print(subjects_file)
+    subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names() %>% select(-c(1))
+    subject_row
+  })
+
+
+head(merge_subjects)
+names_with_indices(merge_subjects)
+
+# Split the gaze condition order into x-x-x-x
+merge_subjects <- merge_subjects %>%
+  mutate(First_Part = substr(gaze_condition_order, 1, 7),
+         Second_Part = substr(gaze_condition_order, 9, 15)) %>%
+  select(-gaze_condition_order) %>%
+  pivot_longer(cols = c(First_Part, Second_Part), 
+               names_to = "Part", 
+               values_to = "gaze_condition_order") %>%
+  select(-Part)
+merge_subjects
+
+# Now get the count of each gaze condition order
+gaze_order_counts <- merge_subjects %>% 
+  group_by(gaze_condition_order) %>%
+  summarise(count = n(), .groups = "drop")
+
+# Rename gaze_condition_order to just conditions
+gaze_order_counts <- gaze_order_counts %>% rename(conditions = gaze_condition_order)
+gaze_order_counts
+write_csv(gaze_order_counts, paste0(path_to_files, "conditions.csv"))
+```
+
+Now we want to do some preliminary analysis on ratings given. First we need to merge all subject rating data into a single DataFrame.
+```{r}
+# Function to merge all CSV files into one DataFrame
+merge_csv_files <- function(datapath) {
+  # List all CSV files in the directory with the specified pattern
+  csv_files <- fs::dir_ls(path = datapath, recurse = TRUE, regexp = "^[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating\\.csv$")
+
+  # Read and concatenate all files into one DataFrame
+  combined_data <- csv_files %>%
+    map_dfr(read_csv, .id = "file_name")  # Optionally include file name as an identifier column
+
+  return(combined_data)
+}
+
+all_data <- merge_csv_files(path_to_files)
+
+# Optional: Save the combined DataFrame to a CSV file
+write_csv(all_data, "ratings_preliminary_merged.csv")
+```
+
+Compute the average rating for each subject_id under each gaze_condition.
+
+```{r}
+# Transform the data to calculate the average rating for each subject_id within each condition combination
+data_transformed <- data %>%
+    group_by(subject_id, gaze_condition, task_condition) %>%
+    summarise(mean_rating = mean(Rating, na.rm = TRUE)) %>%
+    ungroup()
+
+# View the transformed data
+head(data_transformed)
+```
+
+Power analysis
+```{r}
+# Calculate the sample sizes required for small, medium, and large effect sizes
+effect_sizes <- c(small = 0.2, medium = 0.5, large = 0.8)
+names(effect_sizes) <- c("Small", "Medium", "Large")
+
+# Use a loop to calculate required sample sizes for each effect size
+sample_sizes <- setNames(numeric(length(effect_sizes)), names(effect_sizes))
+for (es in names(effect_sizes)) {
+    pwr_result <- pwr.anova.test(
+        k = 4, # for a 2x2 factorial design, we have 4 groups
+        f = effect_sizes[es], # f is the effect size for ANOVA
+        sig.level = 0.05,
+        power = 0.8
+    )
+    sample_sizes[es] <- ceiling(pwr_result$n) # n per group
+}
+# Output the required sample sizes for each effect size
+sample_sizes
+```
+
+How many more subjects do we need?
+```{r}
+
+current_sample_size <- data_transformed %>%
+    count(gaze_condition, task_condition)
+
+additional_subjects_needed <- sapply(sample_sizes, function(size) {
+    required_total <- size * 4 # total required for all groups
+    current_total <- sum(current_sample_size$n)
+    max(0, required_total - current_total)
+})
+
+# Output the number of additional subjects needed for each effect size
+additional_subjects_needed
+```
