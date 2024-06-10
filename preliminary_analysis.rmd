@@ -203,10 +203,7 @@ aggregated_ratings <- subject_ratings %>%
   mutate(renamed_question = ifelse(grepl("Question - How would you rate your awareness", question), "Awareness", renamed_question)) %>%
   mutate(renamed_question = ifelse(grepl("Question - How complex were your instructions when guiding", question), "Complex", renamed_question)) %>%
   group_by(subject_id, renamed_question, gaze_condition) %>%
-  summarise(
-    mean_rating = mean(rating, na.rm = TRUE),
-    median_rating = median(rating, na.rm = TRUE), 
-    .groups = "drop")
+  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
   
   aggregated_ratings
   # Split the data frame by question
@@ -444,7 +441,7 @@ wilcox_test_result <- wilcox.test(
 # Create a manual p-value annotation data frame
 p_value_data <- data.frame(
   x = 1.5, 
-  y = 450, 
+  y = 350, 
   label = paste("p-value:", formatC(wilcox_test_result$p.value, format = "e", digits = 2))
 )
 
