@@ -530,32 +530,54 @@ walk(directories, process_directory)
 
 ```{r}
 # Function to process each directory
+library(tidyverse)
+library(stringr)
+
 process_directory <- function(directory_path) {
-  timings_path <- file.path(directory_path, "timings.csv")
+  timings_path <- file.path(directory_path, "timings_updated.csv")
   words_path <- file.path(directory_path, "words.csv")
   
   if (file.exists(timings_path) && file.exists(words_path)) {
     timings <- read_csv(timings_path)
     words <- read_csv(words_path)
+    timings
+    words
+    print("Header of words:")
+    print(head(words))
     
     # Clean and standardize words
     words <- words %>%
       mutate(word = tolower(word),  # Convert to lower case
              word = str_trim(word),  # Trim whitespace
              word = replace_contraction(word),  # Standardize contractions
-             word = remove_punctuation(word))  # Remove punctuation
+             word = str_replace_all(word, "[[:punct:]]", ""))  # Remove punctuation using stringr
+
+    print("Words data after cleaning:")
+    print(head(words))
 
     # Merge words data with timings based on overlapping intervals
     words_timings <- words %>%
       mutate(across(c(start, end), as.numeric)) %>%
       full_join(timings, by = character()) %>%
-      filter(start.x >= start.y & end.x <= end.y) %>%
-      rename(start_word = start.x, end_word = end.x, start_timing = start.y, end_timing = end.y)
-    
+      rename(start_word = start, end_word = end, start_timing = start.y, end_timing = end.y)
+
+    print("Data after merging and renaming:")
+    print(head(words_timings))
+
+    # Apply filter to match words within the timings intervals
+    words_timings <- words_timings %>%
+      filter(start_word >= start_timing & end_word <= end_timing)
+
+    print("Data after filtering:")
+    print(head(words_timings))
+
     # Count words for each round and task
     word_counts <- words_timings %>%
       group_by(round, task, word) %>%
       summarise(count = n(), .groups = 'drop')
+
+    print("Aggregated word counts:")
+    print(head(word_counts))
     
     # Optionally, save the result in the same directory
     write_csv(word_counts, file.path(directory_path, "word_counts.csv"))
