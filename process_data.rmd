@@ -540,10 +540,10 @@ process_directory <- function(directory_path) {
   if (file.exists(timings_path) && file.exists(words_path)) {
     timings <- read_csv(timings_path)
     words <- read_csv(words_path)
+    print(timings_path)
     timings
     words
-    print("Header of words:")
-    print(head(words))
+
     
     # Clean and standardize words
     words <- words %>%
