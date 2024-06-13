@@ -16,6 +16,8 @@ install.packages("ggpubr")
 install.packages("ggplot2")
 install.packages("rstatix")
 install.packages("dtplyr")
+install.packages("tidyverse")
+install.packages("textclean")
 ```
 
 Initialize commonly used libraries, variables, and functions.
@@ -49,6 +51,8 @@ library(correlation)
 library(png)
 library(patchwork)
 library(dtplyr)
+library(tidyverse)
+library(textclean)
 
 # TODO: When we actually get around to analyzing the data, we need to create separate directories for 'good data',
 # 'bad data', and 'output files' to keep things organized.
@@ -152,7 +156,7 @@ files_fixed
 
 Find the ones that are still in the older format.
 ```{r}
-subject_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating_fixed\\.csv$") %>%
+subject_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3} rating_fixed\\.csv$") %>%
   map_dfr(.f = function(subjects_file) {
     print(subjects_file)
     subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names()
@@ -414,19 +418,8 @@ wide_mean_durations
 duration_wilcox <- wide_mean_durations %>%
   wilcox_test(mean_duration ~ gaze_condition, paired = TRUE)
 duration_wilcox.p <- duration_wilcox |> add_x_position(x="gaze_condition")
-duration_wilcox
+duration_wilcox 
 
-
-# Plotting the results
-wide_mean_durations |> ggplot(aes(x = gaze_condition, y = mean_duration, fill = gaze_condition)) +
-  #geom_boxplot() +
-  #geom_jitter(width = 0.1, alpha = 0.5) +
-  geom_count() +
-  scale_y_continuous(limits = c(0, 500), breaks = seq(0, 500, 50)) +
-  labs(title = "Comparison of Mean Durations by Gaze Condition", x = "Gaze Condition", y = "Mean Duration") +
-  theme_minimal() +
-  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
-  ggpubr::stat_pvalue_manual(duration_wilcox, label = "p", hide.ns = TRUE, y.position = 450)
 ```
 
 
@@ -458,243 +451,127 @@ ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = ga
   geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
 ```
 
+
 ```{r}
-  # Apply the function to each item in the list
-  lapply(names(questions_list), function(q) {
-    plot_question(questions_list[[q]], q)
-  })
-```
+# Now we want to compute end_time for timings.csv files that do not have that column
+# Define the path to the root directory containing the subdirectories
 
-Not sure but I think this chunk doesn't work.
-```{r}
-
-# Add a new column 'renamed_question' with the shortened question text
-subject_ratings <- subject_ratings %>%
-  mutate(renamed_question = case_when(
-    grepl("How effective was your guidance in improving", question) ~ "Effectiveness",
-    grepl("How easy was it to guide and correct ", question) ~ "Ease",
-    grepl("How efficiently could you guide and correct the ", question) ~ "Efficiency",
-    grepl("How would you rate your understanding of the student's focus", question) ~ "Focus",
-    grepl("How would you rate your awareness about the student's", question) ~ "Awareness",
-    grepl("How confident did you feel", question) ~ "Confidence",
-    TRUE ~ question
-  ))
-
-# Now perform the aggregation using the new 'renamed_question' column
-aggregated_ratings <- subject_ratings %>%
-  filter(round_id != 9) %>%
-  group_by(subject_id = substr(subject_id, 1, 7), renamed_question, gaze_condition) %>%
-  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
-
-
-aggregated_ratings
-# Add a new column 'renamed_question' with the shortened question text
-subject_ratings[, renamed_question := fcase(
-  grepl("How effective was your guidance in improving", question), "Effectiveness",
-  grepl("How easy was it to guide and correct ", question), "Ease",
-  grepl("How efficiently could you guide and correct the ", question), "Efficiency",
-  grepl("How would you rate your understanding of the student's focus", question), "Focus",
-  grepl("How would you rate your awareness about the student's", question), "Awareness",
-  grepl("How confident did you feel", question), "Confidence",
-  default = question
-)]
-
-
-
-# Now perform the aggregation using the new 'renamed_question' column
-aggregated_ratings <- subject_ratings[round_id != 9, 
-  .(mean_rating = mean(rating, na.rm = TRUE)), 
-  by = .(subject_id = substr(subject_id, 1, 7), renamed_question, gaze_condition)
-]
-
-
-aggregated_ratings <- subject_ratings %>%
-  dplyr::filter(round_id != 9) %>%
-  group_by(subject_id, question, gaze_condition) %>%
-  mutate(subject_id = substr(subject_id, 1, 7),
-         question = str_replace_all(question, "Question - How effective was your guidance in improving", "Effectiveness"),
-         question = str_replace_all(question, "Question - How easy was it to guide and correct ", "Ease"),
-         question = str_replace_all(question, "Question - How efficiently could you guide and correct the ", "Efficiency"),
-         question = str_replace_all(question, "Question - How would you rate your understanding of the student's focus", "Focus"),
-         question = str_replace_all(question, "Question - How would you rate your awareness about the student's", "Awareness"),
-         question = str_replace_all(question, "Question - How confident did you feel", "Confidence")) %>%
-  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
+find_end_time <- function(start_time, round, task, timings, segments) {
+  print(paste("Processing task:", task, "in round:", round, "with start time:", start_time))
   
+  # Find the start time of the next task in the same round
+  next_task_start_times <- timings %>%
+    filter(round == round, task == task, start > start_time) %>%
+    arrange(task) %>%
+    pull(start)
 
-aggregated_ratings
+  print("Next task start times:")
+  print(next_task_start_times)
 
-# Split the data frame by question
-questions_list <- split(aggregated_ratings, aggregated_ratings$question)
+  # Determine the next task start time or use a large number if it's the last task
+  next_task_start_time <- if (length(next_task_start_times) > 0) next_task_start_times[1] else Inf
 
-# Function to create and save a boxplot for each question
-plot_question <- function(data, question_name) {
-  p <- ggplot(data, aes(x = gaze_condition, y = mean_rating, fill = gaze_condition)) +
-    geom_boxplot() +
-    labs(title = question_name, x = "Gaze Condition", y = "Mean Rating") +
-    theme_minimal()
+  print("Next task start time:")
+  print(next_task_start_time)
+
+  # Find the last segment that starts before the next task starts and ends after the current task's start time
+  valid_segments <- segments %>%
+    filter(start >= start_time, start < next_task_start_time)
+
+  print("Valid segments:")
+  print(valid_segments)
+
+  if (nrow(valid_segments) > 0) {
+    # Find the maximum end time among segments that start before the next task
+    end_time <- max(valid_segments$end)
+  } else {
+    # If no valid segments, use the maximum end time of any segment that starts after this task's start time
+    end_time <- max(segments %>% filter(start >= start_time) %>% pull(end), na.rm = TRUE)
+  }
+
+  print("Calculated end time:")
+  print(end_time)
+
+  return(end_time)
+}
+
+# Function to process each directory
+process_directory <- function(directory_path) {
+  segments_path <- file.path(directory_path, "segments.csv")
+  timings_path <- file.path(directory_path, "timings.csv")
   
-  # Save the plot
-  ggsave(paste0("Boxplot_", question_name, ".png"), plot = p, width = 10, height = 8, dpi = 300)
+  if (file.exists(segments_path) && file.exists(timings_path)) {
+    segments <- read_csv(segments_path)
+    timings <- read_csv(timings_path)
+
+    if (!"end" %in% names(timings)) {
+      print("Processing timings file without end time for directory:")
+      print(directory_path)
+      
+      # Calculate end times for each row in timings
+      timings$end <- mapply(function(start, round, task) {
+        find_end_time(start, round, task, timings, segments)
+      }, timings$start, timings$round, timings$task)
+
+      # Save the updated timings file in the same directory
+      print("Writing updated timings file...")
+      print(file.path(directory_path, "timings_updated.csv"))
+      
+      write_csv(timings, file.path(directory_path, "timings_updated.csv"))
+    }
+  }
+}
+# List all directories under the root path and process each one
+directories <- fs::dir_ls(path_to_files, recurse = TRUE, type = "directory")
+walk(directories, process_directory)
+
+```
+
+
+```{r}
+# Function to process each directory
+process_directory <- function(directory_path) {
+  timings_path <- file.path(directory_path, "timings.csv")
+  words_path <- file.path(directory_path, "words.csv")
+  
+  if (file.exists(timings_path) && file.exists(words_path)) {
+    timings <- read_csv(timings_path)
+    words <- read_csv(words_path)
+    
+    # Clean and standardize words
+    words <- words %>%
+      mutate(word = tolower(word),  # Convert to lower case
+             word = str_trim(word),  # Trim whitespace
+             word = replace_contraction(word),  # Standardize contractions
+             word = remove_punctuation(word))  # Remove punctuation
+
+    # Merge words data with timings based on overlapping intervals
+    words_timings <- words %>%
+      mutate(across(c(start, end), as.numeric)) %>%
+      full_join(timings, by = character()) %>%
+      filter(start.x >= start.y & end.x <= end.y) %>%
+      rename(start_word = start.x, end_word = end.x, start_timing = start.y, end_timing = end.y)
+    
+    # Count words for each round and task
+    word_counts <- words_timings %>%
+      group_by(round, task, word) %>%
+      summarise(count = n(), .groups = 'drop')
+    
+    # Optionally, save the result in the same directory
+    write_csv(word_counts, file.path(directory_path, "word_counts.csv"))
+    
+    return(word_counts)
+  } else {
+    warning("Timings or words file missing in ", directory_path)
+  }
 }
 
-# Apply the function to each item in the list
-lapply(names(questions_list), function(q) {
-  plot_question(questions_list[[q]], q)
-})
+# List all directories under the root path and process each one
+directories <- dir_ls(path_to_files, recurse = TRUE, type = "directory")
+results <- map(directories, process_directory)
+
+# Combine all results into a single data frame
+#final_results <- bind_rows(results)
 
 ```
 
-
-
-
-For each subject we want to figure out their mean rating for each gaze condition. Also we want to only take the first 7 characters of the subject ID.
-```{r}
-
-subject_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating_fixed\\.csv$") %>%
-  map_dfr( .f = function(subjects_file) {
-    print(subjects_file)
-    subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names()
-    subject_row
-  }) 
-
-subject_ratings
-
-aggregated_ratings <- subject_ratings %>%
-  dplyr::filter(round_id != 9) %>%
-  group_by(subject_id, question, gaze_condition) %>%
-  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop") %>%
-  mutate(subject_id = substr(subject_id, 1, 7))
-aggregated_ratings
-
-write_csv(aggregated_ratings, paste0(path_to_files, "aggregated_ratings.csv"))
-```
-
-
-```{r}
-aggregated_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating_fixed\\.csv$") %>%
-  map_dfr(.f = function(subjects_file) {
-    print(subjects_file)
-    subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names()
-    subject_row
-  }) %>%
-  filter(round_id != 9) %>%
-  group_by(subject_id, gaze_condition) %>%
-  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop") %>%
-  mutate(subject_id = substr(subject_id, 1, 7)) %>%
-  pivot_wider(names_from = gaze_condition, values_from = mean_rating) %>%
-  mutate(difference = `Off` - `On`)
-
-# Add a column to indicate positive or negative difference
-aggregated_ratings <- aggregated_ratings %>%
-  mutate(difference_sign = ifelse(difference > 0, "Positive", "Negative"))
-
-aggregated_ratings
-```
-
-
-
-Step 1 of counterbalancing strategy in the user study where we generate count of each order experienced. This mitigates order effects (such as subjects improving by repetition or performing worse due to fatigue), reduces variability from order and carryover effects, and allows for easier advanced analysis (e.g. ANOVA), thus increasing the likelihood of detecting significant effects.
-```{r}
-
-merge_subjects <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "participantData\\.csv$") %>%
-  map_dfr( .f = function(subjects_file) {
-    print(subjects_file)
-    subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names() %>% select(-c(1))
-    subject_row
-  })
-
-
-head(merge_subjects)
-names_with_indices(merge_subjects)
-
-# Split the gaze condition order into x-x-x-x
-merge_subjects <- merge_subjects %>%
-  mutate(First_Part = substr(gaze_condition_order, 1, 7),
-         Second_Part = substr(gaze_condition_order, 9, 15)) %>%
-  select(-gaze_condition_order) %>%
-  pivot_longer(cols = c(First_Part, Second_Part), 
-               names_to = "Part", 
-               values_to = "gaze_condition_order") %>%
-  select(-Part)
-merge_subjects
-
-# Now get the count of each gaze condition order
-gaze_order_counts <- merge_subjects %>% 
-  group_by(gaze_condition_order) %>%
-  summarise(count = n(), .groups = "drop")
-
-# Rename gaze_condition_order to just conditions
-gaze_order_counts <- gaze_order_counts %>% rename(conditions = gaze_condition_order)
-gaze_order_counts
-write_csv(gaze_order_counts, paste0(path_to_files, "conditions.csv"))
-```
-
-Now we want to do some preliminary analysis on ratings given. First we need to merge all subject rating data into a single DataFrame.
-```{r}
-# Function to merge all CSV files into one DataFrame
-merge_csv_files <- function(datapath) {
-  # List all CSV files in the directory with the specified pattern
-  csv_files <- fs::dir_ls(path = datapath, recurse = TRUE, regexp = "^[A-Z]{3}-\\d{4}-\\d{2} \\d{2}-\\d{2} Rating\\.csv$")
-
-  # Read and concatenate all files into one DataFrame
-  combined_data <- csv_files %>%
-    map_dfr(read_csv, .id = "file_name")  # Optionally include file name as an identifier column
-
-  return(combined_data)
-}
-
-all_data <- merge_csv_files(path_to_files)
-
-# Optional: Save the combined DataFrame to a CSV file
-write_csv(all_data, "ratings_preliminary_merged.csv")
-```
-
-Compute the average rating for each subject_id under each gaze_condition.
-
-```{r}
-# Transform the data to calculate the average rating for each subject_id within each condition combination
-data_transformed <- data %>%
-    group_by(subject_id, gaze_condition, task_condition) %>%
-    summarise(mean_rating = mean(Rating, na.rm = TRUE)) %>%
-    ungroup()
-
-# View the transformed data
-head(data_transformed)
-```
-
-Power analysis
-```{r}
-# Calculate the sample sizes required for small, medium, and large effect sizes
-effect_sizes <- c(small = 0.2, medium = 0.5, large = 0.8)
-names(effect_sizes) <- c("Small", "Medium", "Large")
-
-# Use a loop to calculate required sample sizes for each effect size
-sample_sizes <- setNames(numeric(length(effect_sizes)), names(effect_sizes))
-for (es in names(effect_sizes)) {
-    pwr_result <- pwr.anova.test(
-        k = 4, # for a 2x2 factorial design, we have 4 groups
-        f = effect_sizes[es], # f is the effect size for ANOVA
-        sig.level = 0.05,
-        power = 0.8
-    )
-    sample_sizes[es] <- ceiling(pwr_result$n) # n per group
-}
-# Output the required sample sizes for each effect size
-sample_sizes
-```
-
-How many more subjects do we need?
-```{r}
-
-current_sample_size <- data_transformed %>%
-    count(gaze_condition, task_condition)
-
-additional_subjects_needed <- sapply(sample_sizes, function(size) {
-    required_total <- size * 4 # total required for all groups
-    current_total <- sum(current_sample_size$n)
-    max(0, required_total - current_total)
-})
-
-# Output the number of additional subjects needed for each effect size
-additional_subjects_needed
-```
