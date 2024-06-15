@@ -92,8 +92,7 @@ fix_csv_header_cols <- function(file_path, additional_columns, suffix = "_fixed.
   return(new_file_path)
 }
 
-#path_to_files <- "C:\\DataTest\\"
-#path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
+
 path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\"
 options("digits.secs"=6)
 

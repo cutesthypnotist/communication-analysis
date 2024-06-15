@@ -449,6 +449,39 @@ ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = ga
 ```
 
 
+Creates the round times for each subject, we'll use this a lot.
+
+```{r}
+# Step 1: Group by subject_id and round_id to get the minimum unity_log_time along with gaze_condition
+round_times <- subject_ratings %>%
+  group_by(subject_id, round_id) %>%
+  summarise(min_unity_log_time = min(unity_log_time, na.rm = TRUE),
+            max_unity_log_time = max(unity_log_time, na.rm = TRUE),
+            gaze_condition = first(gaze_condition)) %>%
+  ungroup()
+
+# Step 2: Calculate the duration of each round
+# We use the `lag` function to get the previous round's min_unity_log_time
+round_durations <- round_times %>%
+  arrange(subject_id, round_id) %>%
+  group_by(subject_id) %>%
+  mutate(round_start = lag(max_unity_log_time),
+         round_end = min_unity_log_time)
+
+# Compute the times for all the rounds and set the start time for the first round to 0 (as it starts logging on the first task)
+rounds_with_times <- setDT(round_durations) %>% 
+  .[is.na(round_start), round_start:= 0] %>% 
+  .[,min_unity_log_time:=NULL] %>% 
+  .[,max_unity_log_time:=NULL] %>% as.data.frame()
+rounds_with_times
+```
+
+```{r}
+
+```
+
+
+
 ```{r}
 # Now we want to compute end_time for timings.csv files that do not have that column
 # Define the path to the root directory containing the subdirectories
@@ -532,14 +565,20 @@ library(stringr)
 process_directory <- function(directory_path) {
   timings_path <- file.path(directory_path, "timings_updated.csv")
   words_path <- file.path(directory_path, "words.csv")
+  participant_data_path <- file.path(directory_path, "participantData.csv")
   print(directory_path)
   
   if (file.exists(timings_path) && file.exists(words_path)) {
     timings <- read_csv(timings_path)
     words <- read_csv(words_path)
+    participant_data <- read_csv(participant_data_path)
     print(timings_path)
     timings
     words
+    participant_data
+
+    # Extract subject_id
+    subject_id <- participant_data$subject_id
 
     
     # Clean and standardize words
@@ -573,7 +612,11 @@ process_directory <- function(directory_path) {
     word_counts <- words_timings %>%
       group_by(round, task, word) %>%
       summarise(count = n(), .groups = 'drop')
-
+      arrange(desc(count))
+      
+    # Add subject_id to each row
+    word_counts <- word_counts %>%
+      mutate(subject_id = subject_id)
     print("Aggregated word counts:")
     print(head(word_counts))
     

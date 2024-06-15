@@ -191,17 +191,7 @@ awareness_wilcox <- wide_ratings_for_plots |> wilcox_test( Awareness ~ gaze_cond
 awareness_wilcox.p <- awareness_wilcox |> add_x_position(x="gaze_condiition")
 awareness_wilcox
 
-wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Awareness)) + 
-  geom_count() +
-  stat_summary(fun="median", geom="point", colour="orange") +
-  coord_cartesian(ylim=c(1,6)) +
-  scale_y_continuous(breaks=seq(1,5,1)) +
-  theme_classic() +
-  labs(title="Awareness", x="", y="") +
-  stat_pvalue_manual(awareness_wilcox, label='p', hide.ns = T,
-                     y.position = c(5.5))
 
-# Plot w
 
 # Apply the Wilcoxon test to each question type
 test_results <- lapply(question_types, function(q) {
