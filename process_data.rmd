@@ -54,8 +54,6 @@ library(dtplyr)
 library(tidyverse)
 library(textclean)
 
-# TODO: When we actually get around to analyzing the data, we need to create separate directories for 'good data',
-# 'bad data', and 'output files' to keep things organized.
 
 na_strings <- c("NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "NaN", "nan", "Inf", "-Inf", "inf", "-inf", "", " ")
 names_with_indices <- function(data) {
@@ -256,13 +254,13 @@ wide_ratings_for_plots <- aggregated_ratings %>%
   pivot_wider(names_from = renamed_question, values_from = mean_rating)
   
 wide_ratings_for_plots <- wide_ratings_for_plots %>% mutate(gaze_condition = factor(gaze_condition, levels = c("Off", "On")))
-
-#Print out that this is results
-print("Results")
-
-awareness_wilcox <- wide_ratings_for_plots |> wilcox_test( Awareness ~ gaze_condition, paired=T) 
-awareness_wilcox.p <- awareness_wilcox |> add_x_position(x="gaze_condition")
-awareness_wilcox
+  
+  #Print out that this is results
+  print("Results")
+  
+  awareness_wilcox <- wide_ratings_for_plots |> rstatix::wilcox_test( Awareness ~ gaze_condition, paired=T) 
+  awareness_wilcox.p <- awareness_wilcox |> add_x_position(x="gaze_condition")
+  awareness_wilcox
 
 wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Awareness)) + 
   geom_count() +
@@ -323,21 +321,20 @@ wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Focus)) +
 
 
 
-
 test_result_awareness <- perform_wilcox_test(wide_ratings, "Complex")
 test_result_awareness
 
-test_result_awareness <- perform_wilcox_test(wide_ratings, "Confident")
-test_result_awareness
+test_result_confidence <- perform_wilcox_test(wide_ratings, "Confident")
+test_result_confidence
 
-test_result_awareness <- perform_wilcox_test(wide_ratings, "Ease")
-test_result_awareness
+test_result_ease <- perform_wilcox_test(wide_ratings, "Ease")
+test_result_ease
 
-test_result_awareness <- perform_wilcox_test(wide_ratings, "Focus")
-test_result_awareness
+test_result_focus <- perform_wilcox_test(wide_ratings, "Focus")
+test_result_focus
 
-test_result_awareness <- perform_wilcox_test(wide_ratings, "Predict")
-test_result_awareness
+test_result_predict <- perform_wilcox_test(wide_ratings, "Predict")
+test_result_predict
 
 awareness_wilcox <- wide_ratings_for_plots |> wilcox_test( Awareness ~ gaze_condition, paired=T) 
 awareness_wilcox.p <- awareness_wilcox |> add_x_position(x="gaze_condiition")
@@ -527,7 +524,6 @@ walk(directories, process_directory)
 
 ```
 
-
 ```{r}
 # Function to process each directory
 library(tidyverse)
@@ -536,6 +532,7 @@ library(stringr)
 process_directory <- function(directory_path) {
   timings_path <- file.path(directory_path, "timings_updated.csv")
   words_path <- file.path(directory_path, "words.csv")
+  print(directory_path)
   
   if (file.exists(timings_path) && file.exists(words_path)) {
     timings <- read_csv(timings_path)
@@ -552,6 +549,7 @@ process_directory <- function(directory_path) {
              word = replace_contraction(word),  # Standardize contractions
              word = str_replace_all(word, "[[:punct:]]", ""))  # Remove punctuation using stringr
 
+    words
     print("Words data after cleaning:")
     print(head(words))
 
@@ -559,7 +557,7 @@ process_directory <- function(directory_path) {
     words_timings <- words %>%
       mutate(across(c(start, end), as.numeric)) %>%
       full_join(timings, by = character()) %>%
-      rename(start_word = start, end_word = end, start_timing = start.y, end_timing = end.y)
+      rename(start_word = start.x, end_word = end.x, start_timing = start.y, end_timing = end.y)
 
     print("Data after merging and renaming:")
     print(head(words_timings))

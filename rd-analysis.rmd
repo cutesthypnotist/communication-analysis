@@ -1,0 +1,301 @@
+
+
+---
+title: "Communication Experiment Analyses of Ratings"
+output: html_document
+date: "2024-06-06"
+---
+
+```{r setup, include=FALSE}
+source('CommonUtils.r')
+```
+
+# Questionnaires
+
+Subjective Data gotten from the questionnaires. We asked about their awareness, confidence, ease, focus, and complexity for tasks.
+
+```{r}
+aggregated_ratings <- subject_ratings %>%
+  mutate(renamed_question = question) %>%  # Initialize with existing questions
+  mutate(renamed_question = ifelse(grepl("Question - How confident were you in correctly guessing", question), "Confident", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How easy was it to guide", question), "Ease", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How well were you able to predict", question), "Predict", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How would you rate your understanding", question), "Focus", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How would you rate your awareness", question), "Awareness", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How complex were your instructions when guiding", question), "Complex", renamed_question)) %>%
+  group_by(subject_id, renamed_question, gaze_condition) %>%
+  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
+  
+aggregated_ratings
+# Split the data frame by question
+questions_list <- split(aggregated_ratings, aggregated_ratings$renamed_question)
+
+# Function to create and save a boxplot and scatter plot for each question
+plot_question <- function(data, question_name) {
+p <- ggplot(data, aes(x = gaze_condition, y = mean_rating, fill = gaze_condition)) +
+    geom_boxplot(alpha = 0.5) +  # Set transparency to see scatter points clearly
+    geom_point(position = position_jitter(width = 0.1), color = "black", size = 3, alpha = 0.6) +  # Add jitter to avoid overplotting
+    labs(title = question_name, x = "Gaze Condition", y = "Mean Rating") +
+    theme_classic() +
+    scale_y_continuous(limits = c(1, 5), oob = scales::oob_squish)  # Force all data into the specified range
+
+    # Save the plot
+    ggsave(paste0("Boxplot_Scatter_", question_name, ".png"), plot = p, width = 10, height = 8, dpi = 300)
+}
+
+# Reshape data from long to wide format for each question type and gaze condition
+wide_ratings <- aggregated_ratings %>%
+  pivot_wider(names_from = c(renamed_question, gaze_condition), 
+              values_from = mean_rating,
+              names_sep = "_")
+
+# Function to perform Wilcoxon signed-rank test for each question type
+perform_wilcox_test <- function(data, question_name) {
+  data_on <- data[[paste0(question_name, "_On")]]
+  data_off <- data[[paste0(question_name, "_Off")]]
+  test_result <- wilcox.test(data_on, data_off, paired = TRUE)
+  return(test_result)
+}
+
+# List of all question types
+question_types <- unique(aggregated_ratings$renamed_question)
+
+
+wide_ratings
+# Pivot data for plotting
+wide_ratings_for_plots <- aggregated_ratings %>%
+  pivot_wider(names_from = renamed_question, values_from = mean_rating)
+  
+wide_ratings_for_plots <- wide_ratings_for_plots %>% mutate(gaze_condition = factor(gaze_condition, levels = c("Off", "On")))
+```
+
+
+### Awareness
+```{r}
+awareness_wilcox <- wide_ratings_for_plots |> wilcox_test( Awareness ~ gaze_condition, paired=T) 
+awareness_wilcox.p <- awareness_wilcox |> add_x_position(x="gaze_condition")
+awareness_wilcox
+
+wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Awareness)) + 
+  geom_count() +
+  stat_summary(fun="median", geom="point", colour="orange") +
+  coord_cartesian(ylim=c(1,6)) +
+  scale_y_continuous(breaks=seq(1,5,1)) +
+  theme_classic() +
+  labs(title="How aware were you of the student's attention?", x="", y="") +
+  stat_pvalue_manual(awareness_wilcox, label='p', hide.ns = T,
+                     y.position = c(5.5))
+test_result_awareness <- perform_wilcox_test(wide_ratings, "Complex")
+test_result_awareness
+```
+
+
+### Confidence
+```{r}
+#Now do it for Confident
+confident_wilcox <- wide_ratings_for_plots |> wilcox_test( Confident ~ gaze_condition, paired=T)
+confident_wilcox.p <- confident_wilcox |> add_x_position(x="gaze_condiition")
+confident_wilcox
+
+wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Confident)) + 
+  geom_count() +
+  stat_summary(fun="median", geom="point", colour="orange") +
+  coord_cartesian(ylim=c(1,6)) +
+  scale_y_continuous(breaks=seq(1,5,1)) +
+  theme_classic() +
+  labs(title="How confident did you feel when guiding or correcting the student?", x="", y="") +
+  stat_pvalue_manual(confident_wilcox, label='p', hide.ns = T,
+                     y.position = c(5.5))
+test_result_confidence <- perform_wilcox_test(wide_ratings, "Confident")
+test_result_confidence
+
+```
+
+
+### Ease
+```{r}
+#Now do it for Ease
+
+ease_wilcox <- wide_ratings_for_plots |> wilcox_test( Ease ~ gaze_condition, paired=T)
+ease_wilcox.p <- ease_wilcox |> add_x_position(x="gaze_condiition")
+ease_wilcox
+
+wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Ease)) + 
+  geom_count() +
+  stat_summary(fun="median", geom="point", colour="orange") +
+  coord_cartesian(ylim=c(1,6)) +
+  scale_y_continuous(breaks=seq(1,5,1)) +
+  theme_classic() +
+  labs(title="How easy was it to guide and correct the student?", x="", y="") +
+  stat_pvalue_manual(ease_wilcox, label='p', hide.ns = T,
+                     y.position = c(5.5))
+
+
+test_result_ease <- perform_wilcox_test(wide_ratings, "Ease")
+test_result_ease
+```
+
+
+### Focus
+```{r}
+#Now do it for Focus
+
+focus_wilcox <- wide_ratings_for_plots |> wilcox_test( Focus ~ gaze_condition, paired=T)
+focus_wilcox.p <- focus_wilcox |> add_x_position(x="gaze_condiition")
+focus_wilcox
+
+wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Focus)) + 
+  geom_count() +
+  stat_summary(fun="median", geom="point", colour="orange") +
+  coord_cartesian(ylim=c(1,6)) +
+  scale_y_continuous(breaks=seq(1,5,1)) +
+  theme_classic() +
+  labs(title="How well did you understand the student's focus?", x="", y="") +
+  stat_pvalue_manual(focus_wilcox, label='p', hide.ns = T,
+                     y.position = c(5.5))
+
+
+test_result_focus <- perform_wilcox_test(wide_ratings, "Focus")
+test_result_focus
+
+```
+
+
+### Predict
+
+```{r}
+predict_wilcox <- wide_ratings_for_plots |> wilcox_test( Predict ~ gaze_condition, paired=T)
+predict_wilcox.p <- predict_wilcox |> add_x_position(x="gaze_condiition")
+predict_wilcox
+
+wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Predict)) + 
+  geom_count() +
+  stat_summary(fun="median", geom="point", colour="orange") +
+  coord_cartesian(ylim=c(1,6)) +
+  scale_y_continuous(breaks=seq(1,5,1)) +
+  theme_classic() +
+  labs(title="How well did you predict the student's focus?", x="", y="") +
+  stat_pvalue_manual(predict_wilcox, label='p', hide.ns = T,
+                     y.position = c(5.5))
+
+test_result_predict <- perform_wilcox_test(wide_ratings, "Predict")
+test_result_predict
+```
+
+
+```{r}
+test_result_predict <- perform_wilcox_test(wide_ratings, "Predict")
+test_result_predict
+
+awareness_wilcox <- wide_ratings_for_plots |> wilcox_test( Awareness ~ gaze_condition, paired=T) 
+awareness_wilcox.p <- awareness_wilcox |> add_x_position(x="gaze_condiition")
+awareness_wilcox
+
+wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Awareness)) + 
+  geom_count() +
+  stat_summary(fun="median", geom="point", colour="orange") +
+  coord_cartesian(ylim=c(1,6)) +
+  scale_y_continuous(breaks=seq(1,5,1)) +
+  theme_classic() +
+  labs(title="Awareness", x="", y="") +
+  stat_pvalue_manual(awareness_wilcox, label='p', hide.ns = T,
+                     y.position = c(5.5))
+
+# Plot w
+
+# Apply the Wilcoxon test to each question type
+test_results <- lapply(question_types, function(q) {
+  # Perform the test
+  test_result <- perform_wilcox_test(wide_ratings, q)
+  list(question = q, wilcox_test_result = test_result)
+})
+
+# Output the test results
+test_results
+question_types
+wide_ratings
+
+
+```
+
+
+
+```{r}
+
+# Step 1: Group by subject_id and round_id to get the minimum unity_log_time along with gaze_condition
+round_times <- subject_ratings %>%
+  group_by(subject_id, round_id) %>%
+  summarise(min_unity_log_time = min(unity_log_time, na.rm = TRUE),
+            gaze_condition = first(gaze_condition)) %>%
+  ungroup()
+
+# Step 2: Calculate the duration of each round
+# We use the `lag` function to get the previous round's min_unity_log_time
+round_durations <- round_times %>%
+  arrange(subject_id, round_id) %>%
+  group_by(subject_id) %>%
+  mutate(previous_time = lag(min_unity_log_time),
+         round_duration = if_else(is.na(previous_time), min_unity_log_time, min_unity_log_time - previous_time))
+
+round_durations
+
+mean_durations <- round_durations %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(mean_duration = mean(round_duration, na.rm = TRUE))
+
+mean_durations
+
+# Step 4: Reshape data from long to wide format
+wide_mean_durations <- mean_durations %>%
+  pivot_wider(names_from = gaze_condition, 
+              values_from = mean_duration,
+              names_prefix = "mean_duration_")
+
+wide_mean_durations
+
+
+# Assuming wide_mean_durations is already loaded with your data
+# Ensure it's in the correct format
+wide_mean_durations <- wide_mean_durations %>%
+  pivot_longer(cols = starts_with("mean_duration"), names_to = "gaze_condition", values_to = "mean_duration") %>%
+  mutate(gaze_condition = sub("mean_duration_", "", gaze_condition))
+
+# Make it a data frame
+wide_mean_durations <- wide_mean_durations %>% as.data.frame()
+wide_mean_durations
+# Perform Wilcoxon signed-rank test using rstatix
+duration_wilcox <- wide_mean_durations %>%
+  wilcox_test(mean_duration ~ gaze_condition, paired = TRUE)
+duration_wilcox.p <- duration_wilcox |> add_x_position(x="gaze_condition")
+duration_wilcox 
+
+```
+
+
+
+```{r}
+
+# Perform Wilcoxon signed-rank test
+wilcox_test_result <- wilcox.test(
+  wide_mean_durations$mean_duration[wide_mean_durations$gaze_condition == "Off"],
+  wide_mean_durations$mean_duration[wide_mean_durations$gaze_condition == "On"],
+  paired = TRUE
+)
+
+# Create a manual p-value annotation data frame
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 350, 
+  label = paste("p-value:", formatC(wilcox_test_result$p.value, format = "e", digits = 2))
+)
+
+# Plotting the results
+ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 350), breaks = seq(0, 350, 50)) +
+  labs(title = "Comparison of Mean Round (3 Tasks) Durations by Gaze Condition", x = "Gaze Condition", y = "Mean Duration") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+```
