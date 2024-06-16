@@ -53,7 +53,9 @@ library(patchwork)
 library(dtplyr)
 library(tidyverse)
 library(textclean)
-
+# Function to process each directory
+library(tidyverse)
+library(stringr)
 
 na_strings <- c("NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "NaN", "nan", "Inf", "-Inf", "inf", "-inf", "", " ")
 names_with_indices <- function(data) {
@@ -136,19 +138,42 @@ files_fixed
 path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
 ```
 
-
-Fix the missing column headers
+Test to fix column headers in annotation files.
 ```{r}
-files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = ".*[A-Z]{3}-\\d{4}-\\d{1,2} \\d{1,2}-\\d{1,2} Rating\\.csv$") %>%
+test_file <- "C:\\Users\\Iterated Miku System\\Documents\\communication-analysis"
+files_fixed <- fs::dir_ls(path = test_file, recurse = TRUE, regexp = "annotation_test\\.csv$") %>% 
   map(.f = function(file) {
-    cols_to_add <- "id"
-    #cols_to_add <- "id,rating,bwap,round_id,subject_id,gaze_condition,task_condition"
-    #suffix <- "_test.csv"
+    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
     suffix <- "_fixed.csv"
     new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
   })
 files_fixed
 ```
+
+Now fix the column headers in the annotation files.
+```{r}
+files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "annotation_test\\.csv$") %>% 
+  map(.f = function(file) {
+    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
+    suffix <- "_fixed.csv"
+    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
+  })
+```
+
+
+Fix the missing column headers in the ratings files.
+```{r}
+files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3}_annotation\\.csv$") %>%
+  map(.f = function(file) {
+    print("Processing file:")
+    print(file)
+    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
+    suffix <- "_fixed.csv"
+    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
+  })
+files_fixed
+```
+
 
 
 
@@ -190,6 +215,69 @@ test4 <- test3 %>% filter(question == "Question - How confident did you feel")
 test4
 
 ```
+
+
+
+Creates the round times for each subject, we'll use this a lot.
+
+```{r}
+subject_ratings
+# Step 1: Group by subject_id and round_id to get the minimum unity_log_time along with gaze_condition
+# We also need task_condition and gaze_condition
+round_times <- subject_ratings %>%
+  group_by(subject_id, round_id) %>%
+  summarise(min_unity_log_time = min(unity_log_time, na.rm = TRUE),
+            max_unity_log_time = max(unity_log_time, na.rm = TRUE),
+            gaze_condition = first(gaze_condition),
+            task_condition = first(task_condition)) %>%
+  ungroup()
+
+# Step 2: Calculate the duration of each round
+# We use the `lag` function to get the previous round's min_unity_log_time
+round_durations <- round_times %>%
+  arrange(subject_id, round_id) %>%
+  group_by(subject_id) %>%
+  mutate(round_start = lag(max_unity_log_time),
+         round_end = min_unity_log_time)
+
+# Compute the times for all the rounds and set the start time for the first round to 0 (as it starts logging on the first task)
+rounds_with_times <- setDT(round_durations) %>% 
+  .[is.na(round_start), round_start:= 0] %>% 
+  .[,min_unity_log_time:=NULL] %>% 
+  .[,max_unity_log_time:=NULL] %>% as.data.frame()
+
+
+# Add a sequential task_id for each entry, incrementing by 3 for each round
+# First, expand each round into three tasks
+rounds_expanded <- rounds_with_times %>%
+  group_by(subject_id, round_id) %>%
+  slice(rep(1:n(), each = 3)) %>%
+  ungroup()
+
+# Now, assign task_id incrementally across rounds
+rounds_expanded <- rounds_expanded %>%
+  group_by(subject_id) %>%
+  mutate(task_id = row_number()) %>%
+  ungroup() %>%
+  relocate(task_id, .after = round_id)
+
+# Adjust task_condition based on task_id being the first in each round
+rounds_expanded <- rounds_expanded %>%
+  group_by(subject_id, round_id) %>%
+  mutate(task_condition = if_else(task_id %% 3 == 1, "Incorrect", task_condition)) %>%
+  ungroup()
+
+# Adjust task_condition for the second task in each round based on the third task's condition
+subject_rounds <- rounds_expanded %>%
+  group_by(subject_id, round_id) %>%
+  mutate(task_condition = if_else(task_id %% 3 == 2, 
+                                  if_else(lead(task_condition, default = "Correct") == "Correct", "Incorrect", "Correct"), 
+                                  task_condition)) %>%
+  ungroup()
+
+subject_rounds
+```
+
 
 
 
@@ -449,36 +537,6 @@ ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = ga
 ```
 
 
-Creates the round times for each subject, we'll use this a lot.
-
-```{r}
-# Step 1: Group by subject_id and round_id to get the minimum unity_log_time along with gaze_condition
-round_times <- subject_ratings %>%
-  group_by(subject_id, round_id) %>%
-  summarise(min_unity_log_time = min(unity_log_time, na.rm = TRUE),
-            max_unity_log_time = max(unity_log_time, na.rm = TRUE),
-            gaze_condition = first(gaze_condition)) %>%
-  ungroup()
-
-# Step 2: Calculate the duration of each round
-# We use the `lag` function to get the previous round's min_unity_log_time
-round_durations <- round_times %>%
-  arrange(subject_id, round_id) %>%
-  group_by(subject_id) %>%
-  mutate(round_start = lag(max_unity_log_time),
-         round_end = min_unity_log_time)
-
-# Compute the times for all the rounds and set the start time for the first round to 0 (as it starts logging on the first task)
-rounds_with_times <- setDT(round_durations) %>% 
-  .[is.na(round_start), round_start:= 0] %>% 
-  .[,min_unity_log_time:=NULL] %>% 
-  .[,max_unity_log_time:=NULL] %>% as.data.frame()
-rounds_with_times
-```
-
-```{r}
-
-```
 
 
 
@@ -557,21 +615,17 @@ walk(directories, process_directory)
 
 ```
 
-```{r}
-# Function to process each directory
-library(tidyverse)
-library(stringr)
 
-process_directory <- function(directory_path) {
+```{r}
+directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\DIB-019"
   timings_path <- file.path(directory_path, "timings_updated.csv")
   words_path <- file.path(directory_path, "words.csv")
   participant_data_path <- file.path(directory_path, "participantData.csv")
   print(directory_path)
   
-  if (file.exists(timings_path) && file.exists(words_path)) {
-    timings <- read_csv(timings_path)
-    words <- read_csv(words_path)
-    participant_data <- read_csv(participant_data_path)
+    timings <- read_csv(timings_path, na = na_strings, show_col_types = FALSE)
+    words <- read_csv(words_path, na = na_strings, show_col_types = FALSE)
+    participant_data <- read_csv(participant_data_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
     print(timings_path)
     timings
     words
@@ -612,14 +666,114 @@ process_directory <- function(directory_path) {
     word_counts <- words_timings %>%
       group_by(round, task, word) %>%
       summarise(count = n(), .groups = 'drop')
-      arrange(desc(count))
       
     # Add subject_id to each row
     word_counts <- word_counts %>%
-      mutate(subject_id = subject_id)
+      mutate(subject_id = subject_id) %>%
+      rename(round_id = round, task_id = task) %>%
+      relocate(subject_id, .before = round_id) %>%
+      arrange(round_id, task_id, desc(count))
+
+
     print("Aggregated word counts:")
     print(head(word_counts))
+
+
+    subject_rounds <- subject_rounds %>%
+      mutate(across(c(subject_id, round_id, task_id), as.character))  # Convert keys to character for consistent joining
+
+    word_counts <- word_counts %>%
+      mutate(across(c(subject_id, round_id, task_id), as.character))  # Convert keys to character for consistent joining
+
     
+
+    # Perform the join
+    word_counts <- inner_join(subject_rounds, word_counts, by = c("subject_id", "round_id", "task_id"))
+    word_counts
+    # Optionally, save the result in the same directory
+    write_csv(word_counts, file.path(directory_path, "word_counts.csv"))
+
+
+```
+
+
+```{r}
+
+
+process_directory <- function(directory_path) {
+  timings_path <- file.path(directory_path, "timings_updated.csv")
+  words_path <- file.path(directory_path, "words.csv")
+  participant_data_path <- file.path(directory_path, "participantData.csv")
+  print(directory_path)
+  
+  if (file.exists(timings_path) && file.exists(words_path)) {
+    timings <- read_csv(timings_path, na = na_strings, show_col_types = FALSE)
+    words <- read_csv(words_path, na = na_strings, show_col_types = FALSE)
+    participant_data <- read_csv(participant_data_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
+    print(timings_path)
+    timings
+    words
+    participant_data
+
+    # Extract subject_id
+    subject_id <- participant_data$subject_id
+
+    
+    # Clean and standardize words
+    words <- words %>%
+      mutate(word = tolower(word),  # Convert to lower case
+             word = str_trim(word),  # Trim whitespace
+             word = replace_contraction(word),  # Standardize contractions
+             word = str_replace_all(word, "[[:punct:]]", ""))  # Remove punctuation using stringr
+
+    words
+    print("Words data after cleaning:")
+    print(head(words))
+
+    # Merge words data with timings based on overlapping intervals
+    words_timings <- words %>%
+      mutate(across(c(start, end), as.numeric)) %>%
+      full_join(timings, by = character()) %>%
+      rename(start_word = start.x, end_word = end.x, start_timing = start.y, end_timing = end.y)
+
+    print("Data after merging and renaming:")
+    print(head(words_timings))
+
+    # Apply filter to match words within the timings intervals
+    words_timings <- words_timings %>%
+      filter(start_word >= start_timing & end_word <= end_timing)
+
+    print("Data after filtering:")
+    print(head(words_timings))
+
+    # Count words for each round and task
+    word_counts <- words_timings %>%
+      group_by(round, task, word) %>%
+      summarise(count = n(), .groups = 'drop')
+      
+    # Add subject_id to each row
+    word_counts <- word_counts %>%
+      mutate(subject_id = subject_id) %>%
+      rename(round_id = round, task_id = task) %>%
+      relocate(subject_id, .before = round_id) %>%
+      arrange(round_id, task_id, desc(count))
+
+
+    print("Aggregated word counts:")
+    print(head(word_counts))
+
+
+    subject_rounds <- subject_rounds %>%
+      mutate(across(c(subject_id, round_id, task_id), as.character))  # Convert keys to character for consistent joining
+
+    word_counts <- word_counts %>%
+      mutate(across(c(subject_id, round_id, task_id), as.character))  # Convert keys to character for consistent joining
+
+    
+
+    # Perform the join
+    word_counts <- inner_join(subject_rounds, word_counts, by = c("subject_id", "round_id", "task_id"))
+    word_counts
     # Optionally, save the result in the same directory
     write_csv(word_counts, file.path(directory_path, "word_counts.csv"))
     
@@ -637,4 +791,285 @@ results <- map(directories, process_directory)
 #final_results <- bind_rows(results)
 
 ```
+
+TODO: Plot the word counts for each condition and round.
+
+Start off by figuring out % of time they spent looking at the terrain in each condition/task.
+
+First we do a test with one file
+
+```{r}
+#subject_rounds
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+terrain_path <- paste0(path_to_files, "DIB-019\\DIB-019_terrain_fixed.csv")
+terrain <- read_csv(terrain_path, na = na_strings, show_col_types = FALSE) %>% clean_names() %>%
+      mutate(subject_id = substr(subject_id, 1, 7))
+terrain_dt <- terrain %>% setDT() %>%
+  .[round_id != 0]
+
+#terrain_dt <- terrain_dt[subject_rounds, on = c("subject_id", "round_id", "task_id")]
+
+terrain_dt <- merge(terrain_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+# Rename some columns back to where they were before
+terrain_dt <- terrain_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>% .[, gaze_condition.x := NULL] %>% .[, task_condition.x := NULL]  %>% .[, gaze_condition.y := NULL] %>% .[, task_condition.y := NULL] %>% as.data.frame()
+terrain_dt
+
+# Filter out entries for task_ids that are multiples of 3 and have unity_log_time greater than round_end
+terrain_dt <- terrain_dt %>% 
+  mutate(task_id_mod3 = task_id %% 3 == 0) %>%  # Identify task_ids that are multiples of 3
+  filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
+  select(-task_id_mod3)  # Remove the helper column
+
+terrain_dt_grouped <- terrain_dt %>%
+  group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+  summarise(
+    total_syncs = n(),  # Total number of sync_id entries
+    valid_hits = sum(hit_valid, na.rm = TRUE),  # Count of TRUE in hit_valid
+    percent_looking_at_terrain = (valid_hits / total_syncs) * 100  # Calculate percentage
+  ) %>%
+  ungroup()
+
+terrain_dt_grouped
+# Calculate the average percentage of time looking at the terrain for each gaze condition
+average_percent_by_condition <- terrain_dt_grouped %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(
+    average_percent_looking_at_terrain = mean(percent_looking_at_terrain, na.rm = TRUE)
+  ) %>% ungroup()
+
+average_percent_by_condition
+
+```
+
+
+Mean head_angle_using_dir and eye_angle_using_dir for each condition
+
+```{r}
+# Calculate the mean head_angle_using_dir and eye_angle_using_dir for each condition
+terrain_dt
+# For head_angle_using_dir and eye_angle_using_dir, find the maximum value that is not -10000 and then use that instead of -10000
+
+#First get the maximum for each and add a new column with those, PMAX DOES NOT WORK
+
+
+max_head_angle <- terrain_dt %>% filter(head_angle_using_dir != -10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_head_angle = max(head_angle_using_dir, na.rm = TRUE)) %>% ungroup()
+
+max_eye_angle <- terrain_dt %>% filter(eye_angle_using_dir != -10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_eye_angle = max(eye_angle_using_dir, na.rm = TRUE)) %>% ungroup()
+
+max_distance <- terrain_dt %>% filter(distance != 10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_distance = max(distance, na.rm = TRUE)) %>% ungroup()
+
+angles_terrain_dt <- merge(terrain_dt, max_head_angle, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
+angles_terrain_dt <- merge(angles_terrain_dt, max_eye_angle, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
+angles_terrain_dt <- merge(angles_terrain_dt, max_distance, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
+
+# Now find all -10000 values in eye_angle_using_dir and head_angle_using_dir and replace them with the max values
+
+angles_terrain_dt <- angles_terrain_dt %>% 
+  mutate(head_angle_using_dir = ifelse(head_angle_using_dir == -10000, max_head_angle, head_angle_using_dir),
+         eye_angle_using_dir = ifelse(eye_angle_using_dir == -10000, max_eye_angle, eye_angle_using_dir),
+         distance = ifelse(distance == 10000, max_distance, distance))
+
+  
+average_angles_by_condition <- angles_terrain_dt %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(
+    mean_head_angle_using_dir = mean(head_angle_using_dir, na.rm = TRUE),
+    mean_eye_angle_using_dir = mean(eye_angle_using_dir, na.rm = TRUE),
+    mean_distance = mean(distance, na.rm = TRUE)
+  ) %>% ungroup()
+
+average_angles_by_condition
+
+
+```
+
+
+#TODO: Some other things to investigate - use head_angle_using_dir and eye_angle_using_dir for angles
+Can check the distance fields to see how much movement their eyes did on the terrain
+Mean head_angle_using_dir and eye_angle_using_dir for each condition
+delta angles should be in angle per second, so we can calculate the average delta angle per second for each condition.
+
+
+The all files version.
+
+```{r}
+
+# Process each terrain file and calculate the average percentage of time looking at the terrain
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+average_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3}_terrain_fixed\\.csv$") %>%
+  map_dfr(.f = function(terrain_path) {
+    print(terrain_path)
+    terrain <- read_csv(terrain_path, na = na_strings, show_col_types = FALSE) %>% clean_names() %>%
+          mutate(subject_id = substr(subject_id, 1, 7))
+    terrain_dt <- terrain %>% setDT() %>%
+      .[round_id != 0]
+
+    #terrain_dt <- terrain_dt[subject_rounds, on = c("subject_id", "round_id", "task_id")]
+
+    terrain_dt <- merge(terrain_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+    # Rename some columns back to where they were before
+    terrain_dt <- terrain_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>% .[, gaze_condition.x := NULL] %>% .[, task_condition.x := NULL]  %>% .[, gaze_condition.y := NULL] %>% .[, task_condition.y := NULL] %>% as.data.frame()
+        
+    # Filter out entries for task_ids that are multiples of 3 and have unity_log_time greater than round_end
+    #terrain_dt <- terrain_dt %>% 
+      #mutate(task_id_mod3 = task_id %% 3 == 0) %>%  # Identify task_ids that are multiples of 3
+      #filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
+      #select(-task_id_mod3)  # Remove the helper column    
+    
+    
+    terrain_dt <- terrain_dt %>%
+      group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+      summarise(
+        total_syncs = n(),  # Total number of sync_id entries
+        valid_hits = sum(hit_valid, na.rm = TRUE),  # Count of TRUE in hit_valid
+        percent_looking_at_terrain = (valid_hits / total_syncs) * 100  # Calculate percentage
+      ) %>%
+      ungroup()
+    terrain_dt
+
+    # Calculate the average percentage of time looking at the terrain for each gaze condition
+    average_percent_by_condition <- terrain_dt %>%
+      group_by(subject_id, gaze_condition) %>%
+      summarise(
+        average_percent_looking_at_terrain = median(percent_looking_at_terrain, na.rm = TRUE)
+      ) %>% ungroup()
+
+    average_percent_by_condition
+  })
+average_percent_by_condition_all
+
+# Process each terrain file and calculate the average head_angle_using_dir and eye_angle_using_dir for each condition
+average_angles_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3}_terrain_fixed\\.csv$") %>%
+  map_dfr(.f = function(terrain_path) {
+    print(terrain_path)
+    terrain <- read_csv(terrain_path, na = na_strings, show_col_types = FALSE) %>% clean_names() %>%
+          mutate(subject_id = substr(subject_id, 1, 7))
+    terrain_dt <- terrain %>% setDT() %>%
+      .[round_id != 0]
+
+    #terrain_dt <- terrain_dt[subject_rounds, on = c("subject_id", "round_id", "task_id")]
+
+    terrain_dt <- merge(terrain_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+    # Rename some columns back to where they were before
+    terrain_dt <- terrain_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>% .[, gaze_condition.x := NULL] %>% .[, task_condition.x := NULL]  %>% .[, gaze_condition.y := NULL] %>% .[, task_condition.y := NULL] %>% as.data.frame()
+    terrain_dt
+    
+    # Filter out entries for task_ids that are multiples of 3 and have unity_log_time greater than round_end
+    #terrain_dt <- terrain_dt %>% 
+      #mutate(task_id_mod3 = task_id %% 3 == 0) %>%  # Identify task_ids that are multiples of 3
+      #filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
+      #select(-task_id_mod3)  # Remove the helper column
+    
+    # Calculate the mean head_angle_using_dir and eye_angle_using_dir for each condition
+    max_head_angle <- terrain_dt %>% filter(head_angle_using_dir != -10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_head_angle = max(head_angle_using_dir, na.rm = TRUE)) %>% ungroup()
+    
+    max_eye_angle <- terrain_dt %>% filter(eye_angle_using_dir != -10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_eye_angle = max(eye_angle_using_dir, na.rm = TRUE)) %>% ungroup()
+
+    max_distance <- terrain_dt %>% filter(distance != 10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_distance = max(distance, na.rm = TRUE)) %>% ungroup()
+    
+    angles_terrain_dt <- merge(terrain_dt, max_head_angle, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
+    angles_terrain_dt <- merge(angles_terrain_dt, max_eye_angle, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
+    angles_terrain_dt <- merge(angles_terrain_dt, max_distance, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
+    
+    # Now find all -10000 values in eye_angle_using_dir and head_angle_using_dir and replace them with the max values
+    
+    angles_terrain_dt <- angles_terrain_dt %>% 
+      mutate(head_angle_using_dir = ifelse(head_angle_using_dir == -10000, max_head_angle, head_angle_using_dir),
+             eye_angle_using_dir = ifelse(eye_angle_using_dir == -10000, max_eye_angle, eye_angle_using_dir),
+             distance = ifelse(distance == 10000, max_distance, distance))
+    
+      
+    average_angles_by_condition <- angles_terrain_dt %>%
+      group_by(subject_id, gaze_condition) %>%
+      summarise(
+        mean_head_angle_using_dir = median(head_angle_using_dir, na.rm = TRUE),
+        mean_eye_angle_using_dir = median(eye_angle_using_dir, na.rm = TRUE),
+        mean_distance = median(distance, na.rm = TRUE)
+      ) %>% ungroup()
+    
+    average_angles_by_condition
+  })
+
+
+
+```
+
+Percentage for all conditions
+```{r}
+# Now pivot it wider
+average_percent_by_condition_all <- average_percent_by_condition_all %>%
+  pivot_wider(names_from = gaze_condition, 
+              values_from = average_percent_looking_at_terrain,
+              names_prefix = "average_percent_looking_at_terrain_") %>%
+  as.data.frame()
+
+
+average_percent_by_condition_all
+
+#Now we can plot the results using box and whiskers
+
+average_percent_by_condition_all %>%
+  pivot_longer(cols = starts_with("average_percent_looking_at_terrain"), names_to = "gaze_condition", values_to = "average_percent_looking_at_terrain") %>%
+  ggplot(aes(x = gaze_condition, y = average_percent_looking_at_terrain, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  labs(title = "Comparison of Average Percentage of Time Looking at Terrain by Gaze Condition", x = "Gaze Condition", y = "Average Percentage of Time Looking at Terrain") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+```
+
+```{r}
+average_angles_by_condition_all
+
+# Assuming average_angles_by_condition_all is a data frame
+# Convert to data.table and reshape the data from long to wide format using dcast
+average_angles_by_condition_all_dt <- average_angles_by_condition_all %>%
+  data.table::as.data.table() %>%
+  data.table::dcast(subject_id ~ gaze_condition, 
+                    value.var = c("mean_head_angle_using_dir", "mean_eye_angle_using_dir", "mean_distance"),
+                    fun.aggregate = mean)
+names(average_angles_by_condition_all_dt)
+average_angles_by_condition_all_dt
+
+#Now plot each of the angles and distance
+# Box and whiskers for head angle
+average_angles_by_condition_all_dt %>%
+  pivot_longer(cols = starts_with("mean_head_angle_using_dir"), names_to = "gaze_condition", values_to = "mean_head_angle_using_dir") %>%
+  ggplot(aes(x = gaze_condition, y = mean_head_angle_using_dir, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 360), breaks = seq(0, 360, 45)) +
+  labs(title = "Comparison of Mean Head Angle Using Direction by Gaze Condition", x = "Gaze Condition", y = "Mean Head Angle Using Direction") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+# Box and whiskers for eye angle
+average_angles_by_condition_all_dt %>%
+  pivot_longer(cols = starts_with("mean_eye_angle_using_dir"), names_to = "gaze_condition", values_to = "mean_eye_angle_using_dir") %>%
+  ggplot(aes(x = gaze_condition, y = mean_eye_angle_using_dir, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 360), breaks = seq(0, 360, 45)) +
+  labs(title = "Comparison of Mean Eye Angle Using Direction by Gaze Condition", x = "Gaze Condition", y = "Mean Eye Angle Using Direction") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+# Box and whiskers for distance
+average_angles_by_condition_all_dt %>%
+  pivot_longer(cols = starts_with("mean_distance"), names_to = "gaze_condition", values_to = "mean_distance") %>%
+  ggplot(aes(x = gaze_condition, y = mean_distance, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+  labs(title = "Comparison of Mean Distance by Gaze Condition", x = "Gaze Condition", y = "Mean Distance") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+```
+
+TODO: We need to find the delta eye-angles per second, while eye_angle is always 0 we can instead base it off of eye_angle_using_dir, alternatively we can get it from the metrics.csv file.
 
