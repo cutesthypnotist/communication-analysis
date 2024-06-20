@@ -617,7 +617,7 @@ walk(directories, process_directory)
 
 
 ```{r}
-directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\DIB-019"
+directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\QWE-042"
   timings_path <- file.path(directory_path, "timings_updated.csv")
   words_path <- file.path(directory_path, "words.csv")
   participant_data_path <- file.path(directory_path, "participantData.csv")
@@ -627,9 +627,9 @@ directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Comm
     words <- read_csv(words_path, na = na_strings, show_col_types = FALSE)
     participant_data <- read_csv(participant_data_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
     print(timings_path)
-    timings
-    words
-    participant_data
+    #timings
+    #words
+    #participant_data
 
     # Extract subject_id
     subject_id <- participant_data$subject_id
@@ -642,30 +642,28 @@ directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Comm
              word = replace_contraction(word),  # Standardize contractions
              word = str_replace_all(word, "[[:punct:]]", ""))  # Remove punctuation using stringr
 
-    words
-    print("Words data after cleaning:")
-    print(head(words))
+    #words
+    #print("Words data after cleaning:")
+    #print(head(words))
 
     # Merge words data with timings based on overlapping intervals
     words_timings <- words %>%
       mutate(across(c(start, end), as.numeric)) %>%
       full_join(timings, by = character()) %>%
       rename(start_word = start.x, end_word = end.x, start_timing = start.y, end_timing = end.y)
+    words_timings
 
-    print("Data after merging and renaming:")
-    print(head(words_timings))
 
     # Apply filter to match words within the timings intervals
     words_timings <- words_timings %>%
       filter(start_word >= start_timing & end_word <= end_timing)
-
-    print("Data after filtering:")
-    print(head(words_timings))
-
+  
     # Count words for each round and task
     word_counts <- words_timings %>%
       group_by(round, task, word) %>%
       summarise(count = n(), .groups = 'drop')
+    
+    word_counts
       
     # Add subject_id to each row
     word_counts <- word_counts %>%
@@ -673,11 +671,10 @@ directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Comm
       rename(round_id = round, task_id = task) %>%
       relocate(subject_id, .before = round_id) %>%
       arrange(round_id, task_id, desc(count))
-
-
-    print("Aggregated word counts:")
-    print(head(word_counts))
-
+    
+    word_counts
+    participant_data
+    subject_rounds
 
     subject_rounds <- subject_rounds %>%
       mutate(across(c(subject_id, round_id, task_id), as.character))  # Convert keys to character for consistent joining
@@ -690,6 +687,7 @@ directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Comm
     # Perform the join
     word_counts <- inner_join(subject_rounds, word_counts, by = c("subject_id", "round_id", "task_id"))
     word_counts
+
     # Optionally, save the result in the same directory
     write_csv(word_counts, file.path(directory_path, "word_counts.csv"))
 
@@ -913,10 +911,10 @@ average_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = T
     terrain_dt <- terrain_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>% .[, gaze_condition.x := NULL] %>% .[, task_condition.x := NULL]  %>% .[, gaze_condition.y := NULL] %>% .[, task_condition.y := NULL] %>% as.data.frame()
         
     # Filter out entries for task_ids that are multiples of 3 and have unity_log_time greater than round_end
-    #terrain_dt <- terrain_dt %>% 
-      #mutate(task_id_mod3 = task_id %% 3 == 0) %>%  # Identify task_ids that are multiples of 3
-      #filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
-      #select(-task_id_mod3)  # Remove the helper column    
+    terrain_dt <- terrain_dt %>% 
+      mutate(task_id_mod3 = task_id %% 3 == 0) %>%  # Identify task_ids that are multiples of 3
+      filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
+      select(-task_id_mod3)  # Remove the helper column    
     
     
     terrain_dt <- terrain_dt %>%
@@ -958,10 +956,10 @@ average_angles_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TR
     terrain_dt
     
     # Filter out entries for task_ids that are multiples of 3 and have unity_log_time greater than round_end
-    #terrain_dt <- terrain_dt %>% 
-      #mutate(task_id_mod3 = task_id %% 3 == 0) %>%  # Identify task_ids that are multiples of 3
-      #filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
-      #select(-task_id_mod3)  # Remove the helper column
+    terrain_dt <- terrain_dt %>% 
+      mutate(task_id_mod3 = task_id %% 3 == 0) %>%  # Identify task_ids that are multiples of 3
+      filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
+      select(-task_id_mod3)  # Remove the helper column
     
     # Calculate the mean head_angle_using_dir and eye_angle_using_dir for each condition
     max_head_angle <- terrain_dt %>% filter(head_angle_using_dir != -10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_head_angle = max(head_angle_using_dir, na.rm = TRUE)) %>% ungroup()
@@ -970,9 +968,14 @@ average_angles_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TR
 
     max_distance <- terrain_dt %>% filter(distance != 10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_distance = max(distance, na.rm = TRUE)) %>% ungroup()
     
+    max_head_angle2 <- terrain_dt %>% filter(head_angle != -10000) %>% group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>% summarise(max_head_angle2 = max(head_angle, na.rm = TRUE)) %>% ungroup()
+    
+    
     angles_terrain_dt <- merge(terrain_dt, max_head_angle, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
     angles_terrain_dt <- merge(angles_terrain_dt, max_eye_angle, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
     angles_terrain_dt <- merge(angles_terrain_dt, max_distance, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
+    angles_terrain_dt <- merge(angles_terrain_dt, max_head_angle2, by = c("subject_id", "round_id", "task_id", "task_type", "gaze_condition", "task_condition"), all.x = TRUE)
+    
     
     # Now find all -10000 values in eye_angle_using_dir and head_angle_using_dir and replace them with the max values
     
@@ -987,7 +990,8 @@ average_angles_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TR
       summarise(
         mean_head_angle_using_dir = median(head_angle_using_dir, na.rm = TRUE),
         mean_eye_angle_using_dir = median(eye_angle_using_dir, na.rm = TRUE),
-        mean_distance = median(distance, na.rm = TRUE)
+        mean_distance = median(distance, na.rm = TRUE),
+        mean_head_angle2 = median(head_angle, na.rm = TRUE)
       ) %>% ungroup()
     
     average_angles_by_condition
@@ -1031,7 +1035,7 @@ average_angles_by_condition_all
 average_angles_by_condition_all_dt <- average_angles_by_condition_all %>%
   data.table::as.data.table() %>%
   data.table::dcast(subject_id ~ gaze_condition, 
-                    value.var = c("mean_head_angle_using_dir", "mean_eye_angle_using_dir", "mean_distance"),
+                    value.var = c("mean_head_angle_using_dir", "mean_eye_angle_using_dir", "mean_distance", "mean_head_angle2"),
                     fun.aggregate = mean)
 names(average_angles_by_condition_all_dt)
 average_angles_by_condition_all_dt
@@ -1069,7 +1073,915 @@ average_angles_by_condition_all_dt %>%
   labs(title = "Comparison of Mean Distance by Gaze Condition", x = "Gaze Condition", y = "Mean Distance") +
   theme_minimal() +
   scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+# Box and whiskers for head angle
+average_angles_by_condition_all_dt %>%
+  pivot_longer(cols = starts_with("mean_head_angle2"), names_to = "gaze_condition", values_to = "mean_head_angle2") %>%
+  ggplot(aes(x = gaze_condition, y = mean_head_angle2, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 360), breaks = seq(0, 360, 45)) +
+  labs(title = "Comparison of Mean Head Angle by Gaze Condition", x = "Gaze Condition", y = "Mean Head Angle") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
 ```
 
-TODO: We need to find the delta eye-angles per second, while eye_angle is always 0 we can instead base it off of eye_angle_using_dir, alternatively we can get it from the metrics.csv file.
+TODO: I found no differences but we can further group it by task condition and task type if we want.
 
+
+Now we do it for the student
+
+
+Single file version to test % of time looking at object
+
+```{r}
+
+#C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/DIB-019/DIB-019_object.csv
+object_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/DIB-019/DIB-019_object.csv"
+print(object_path)
+object_data <- read_csv(object_path, na = na_strings, show_col_types = FALSE) %>%
+  clean_names() %>%
+  mutate(subject_id = substr(subject_id, 1, 7))
+object_dt <- object_data %>% setDT() %>%
+  .[round_id != 0]
+
+object_dt <- merge(object_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+# Rename some columns back to where they were before
+object_dt <- object_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+  .[, gaze_condition.x := NULL] %>%
+  .[, task_condition.x := NULL] %>%
+  .[, gaze_condition.y := NULL] %>%
+  .[, task_condition.y := NULL] %>%
+  as.data.frame()
+
+# Filter out entries for task_ids that are multiples of 3 and have unity_log_time greater than round_end
+object_dt <- object_dt %>%
+  mutate(task_id_mod3 = task_id %% 3 == 0) %>%
+  filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
+  select(-task_id_mod3)  # Remove the helper column
+
+# Calculate looking at object based on eye_angle threshold
+object_dt <- object_dt %>%
+  mutate(looking_at_object = eye_angle_using_pos < 25)  # True if eye_angle is under 25, indicating looking at the object
+object_dt
+
+object_dt_grouped <- object_dt %>%
+  group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+  summarise(
+    total_syncs = n(),  # Total number of sync_id entries
+    valid_hits = sum(looking_at_object, na.rm = TRUE),   # Count of entries where looking at object
+    percent_looking_at_object = (valid_hits / total_syncs) * 100  # Calculate percentage
+  ) %>%
+  ungroup()
+
+# Calculate the average percentage of time looking at the object for each gaze condition
+average_percent_by_condition <- object_dt_grouped %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(
+    average_percent_looking_at_object = median(percent_looking_at_object, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+average_percent_by_condition
+```
+
+Now we do it for all files
+
+```{r}
+
+# Process each object file and calculate the average percentage of time looking at the object with eye_angle over 25
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+average_object_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3}_object\\.csv$") %>%
+  map_dfr(.f = function(object_path) {
+    print(object_path)
+    object_data <- read_csv(object_path, na = na_strings, show_col_types = FALSE) %>%
+      clean_names() %>%
+      mutate(subject_id = substr(subject_id, 1, 7))
+    object_dt <- object_data %>% setDT() %>%
+      .[round_id != 0]
+
+    object_dt <- merge(object_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+    # Rename some columns back to where they were before
+    object_dt <- object_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+      .[, gaze_condition.x := NULL] %>%
+      .[, task_condition.x := NULL] %>%
+      .[, gaze_condition.y := NULL] %>%
+      .[, task_condition.y := NULL] %>%
+      as.data.frame()
+
+    # Filter out entries for task_ids that are multiples of 3 and have unity_log_time greater than round_end
+    object_dt <- object_dt %>%
+      mutate(task_id_mod3 = task_id %% 3 == 0) %>%
+      filter(!(task_id_mod3 & unity_log_time > round_end)) %>%
+      select(-task_id_mod3)  # Remove the helper column
+    
+    # Calculate looking at object based on eye_angle threshold
+    object_dt <- object_dt %>%
+      mutate(looking_at_object = eye_angle_using_pos < 25)  # True if eye_angle is under 25, indicating looking at the object
+
+
+    object_dt_grouped <- object_dt %>%
+      group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+      summarise(
+        total_syncs = n(),  # Total number of sync_id entries
+        valid_hits = sum(looking_at_object, na.rm = TRUE),   # Count of entries where looking at object
+        percent_looking_at_object = (valid_hits / total_syncs) * 100  # Calculate percentage
+      ) %>%
+      ungroup()
+
+    # Calculate the average percentage of time looking at the object for each gaze condition
+    average_percent_by_condition <- object_dt_grouped %>%
+      group_by(subject_id, gaze_condition) %>%
+      summarise(
+        average_percent_looking_at_object = median(percent_looking_at_object, na.rm = TRUE)
+      ) %>%
+      ungroup()
+
+    average_percent_by_condition
+  })
+average_object_percent_by_condition_all
+```
+
+```{r}
+# Now pivot it wider
+
+average_object_percent_by_condition_all_wide <- average_object_percent_by_condition_all %>%
+  pivot_wider(names_from = gaze_condition, 
+              values_from = average_percent_looking_at_object,
+              names_prefix = "average_percent_looking_at_object_") %>%
+  as.data.frame()
+
+average_object_percent_by_condition_all_wide
+
+#Now we can plot the results using box and whiskers
+average_object_percent_by_condition_all_wide %>%
+  pivot_longer(cols = starts_with("average_percent_looking_at_object"), names_to = "gaze_condition", values_to = "average_percent_looking_at_object") %>%
+  ggplot(aes(x = gaze_condition, y = average_percent_looking_at_object, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 60), breaks = seq(0, 60, 5)) +
+  labs(title = "Comparison of Average Percentage of Time Looking at Student by Gaze Condition", x = "Gaze Condition", y = "Average Percentage of Time Looking at Student") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+```
+# There might be a significant difference here so let's test it with wilcoxon.
+
+```{r}
+
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+average_object_percent_by_condition_all
+average_object_percent_by_condition_all_wide
+
+#So for future reference wilcoxon wants to see subject_id, gaze_condition, and average_percent_looking_at_object in that format, so we have that in average_object_percent_by_condition_all
+
+#Now we can do the wilcoxon test
+looking_at_object_wilcox <- average_object_percent_by_condition_all %>%
+  wilcox_test(average_percent_looking_at_object ~ gaze_condition, paired = TRUE)
+looking_at_object_wilcox.p <- looking_at_object_wilcox %>%
+  add_x_position(x = "gaze_condition")
+looking_at_object_wilcox
+
+#Okay there is a sig diff, now we do it the wilcox.test way so we can plot it
+
+looking_at_object_wilcox_test <- wilcox.test(average_object_percent_by_condition_all$average_percent_looking_at_object[average_object_percent_by_condition_all$gaze_condition == "Off"], average_object_percent_by_condition_all$average_percent_looking_at_object[average_object_percent_by_condition_all$gaze_condition == "On"], paired = TRUE)
+looking_at_object_wilcox_test
+
+# Create a manual p-value annotation data frame
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 50, 
+  label = paste("p-value:", formatC(looking_at_object_wilcox_test$p.value, format = "f", digits = 6))
+)
+
+average_object_percent_by_condition_all
+ggplot(average_object_percent_by_condition_all, aes(x = gaze_condition, y = average_percent_looking_at_object, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 50), breaks = seq(0, 50, 5)) +
+  labs(title = "Comparison of Average Percentage of Time Looking at Student by Gaze Condition", x = "Gaze Condition", y = "Average Percentage of Time Looking at Student") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+
+
+```
+Defined as anytime the eye gaze ray hit the student collider (capsule collider containing student).
+
+
+
+We'll check annotations later but now let's check the word count distrbution.
+First just check total words per condition
+
+Single file test
+```{r}
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+
+word_count_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/DIB-019/word_counts.csv"
+print(word_count_path)
+
+word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_character(), task_id = col_character())) %>% clean_names() %>%
+  mutate(subject_id = substr(subject_id, 1, 7))
+
+# Remove start_round and end_round columns
+subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+word_count_data
+
+word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
+word_count_dt <- merge(word_count_dt, subject_rounds_dt_word_count, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+# Rename some columns back to where they were before
+word_count_dt <- word_count_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+  .[, gaze_condition.x := NULL] %>%
+  .[, task_condition.x := NULL] %>%
+  .[, gaze_condition.y := NULL] %>%
+  .[, task_condition.y := NULL] %>%
+  as.data.frame()
+
+word_count_dt <- word_count_dt %>% relocate(gaze_condition, .after = subject_id) %>% relocate(task_condition, .after = gaze_condition) %>% relocate(round_id, .after = task_id)
+word_count_dt
+
+# Need to compute the task_type column based on mod
+# mod 3 == 1 -> "Locate"
+# mod 3 == 2 -> "Puzzle"
+# mod 3 == 0 -> "Remaining"
+
+word_count_dt <- word_count_dt %>%
+  mutate(task_id = as.numeric(task_id)) %>%
+  setDT() %>% 
+  .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Puzzle"] %>% .[task_id %% 3 == 0, task_type := "Remaining"] %>% as.data.frame()
+word_count_dt
+
+# Calculate the total word count for each condition
+word_count_dt_grouped <- word_count_dt %>%
+  group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+  summarise(
+    total_words = sum(count, na.rm = TRUE)  # Total word count
+  ) %>%
+  ungroup()
+
+# Now calculate the mean word count for each condition
+average_word_count_by_condition <- word_count_dt_grouped %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(
+    average_word_count = mean(total_words, na.rm = TRUE)
+  ) %>%
+  ungroup()
+average_word_count_by_condition
+
+```
+
+
+All files version
+
+```{r}
+# Process each word count file and calculate the average word count for each condition
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+average_word_count_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/word_counts\\.csv$") %>%
+  map_dfr(.f = function(word_count_path) {
+    print(word_count_path)
+    word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_character(), task_id = col_character())) %>% clean_names() %>%
+      mutate(subject_id = substr(subject_id, 1, 7))
+
+    # Remove start_round and end_round columns
+    subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+
+    word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
+    word_count_dt <- merge(word_count_dt, subject_rounds_dt_word_count, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+    # Rename some columns back to where they were before
+    word_count_dt <- word_count_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+      .[, gaze_condition.x := NULL] %>%
+      .[, task_condition.x := NULL] %>%
+      .[, gaze_condition.y := NULL] %>%
+      .[, task_condition.y := NULL] %>%
+      as.data.frame()
+
+    word_count_dt <- word_count_dt %>% relocate(gaze_condition, .after = subject_id) %>% relocate(task_condition, .after = gaze_condition) %>% relocate(round_id, .after = task_id)
+
+    # Need to compute the task_type column based on mod
+    # mod 3 == 1 -> "Locate"
+    # mod 3 == 2 -> "Puzzle"
+    # mod 3 == 0 -> "Remaining"
+
+    word_count_dt <- word_count_dt %>%
+      mutate(task_id = as.numeric(task_id)) %>%
+      setDT() %>% 
+      .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Puzzle"] %>% .[task_id %% 3 == 0, task_type := "Remaining"] %>% as.data.frame()
+    
+    # Calculate the total word count for each condition
+    word_count_dt_grouped <- word_count_dt %>%
+      group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+      summarise(
+        total_words = sum(count, na.rm = TRUE)  # Total word count
+      ) %>%
+      ungroup()
+    
+    # Now calculate the mean word count for each condition
+    average_word_count_by_condition <- word_count_dt_grouped %>%
+      group_by(subject_id, gaze_condition) %>%
+      summarise(
+        average_word_count = mean(total_words, na.rm = TRUE)
+      ) %>%
+      ungroup()
+    
+    average_word_count_by_condition
+  })
+average_word_count_by_condition_all
+```
+
+Now we plot it
+
+```{r}
+# Now pivot it wider
+average_word_count_by_condition_all_wide <- average_word_count_by_condition_all %>%
+  pivot_wider(names_from = gaze_condition, 
+              values_from = average_word_count,
+              names_prefix = "average_word_count_") %>%
+  as.data.frame()
+
+average_word_count_by_condition_all_wide
+
+#Now we can plot the results using box and whiskers
+average_word_count_by_condition_all_wide %>%
+  pivot_longer(cols = starts_with("average_word_count"), names_to = "gaze_condition", values_to = "average_word_count") %>%
+  ggplot(aes(x = gaze_condition, y = average_word_count, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  labs(title = "Comparison of Average Word Count by Gaze Condition", x = "Gaze Condition", y = "Average Word Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+```
+
+We may have a significant difference so we should test and see.
+
+```{r}
+# Now we can do the wilcoxon test
+word_count_wilcox <- average_word_count_by_condition_all %>%
+  wilcox_test(average_word_count ~ gaze_condition, paired = TRUE)
+word_count_wilcox.p <- word_count_wilcox %>%
+  add_x_position(x = "gaze_condition")
+word_count_wilcox
+```
+Looks like we have a significant difference, let's plot it.
+
+```{r}
+# Create a manual p-value annotation data frame
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 100, 
+  label = paste("p-value:", formatC(word_count_wilcox$p, format = "f", digits = 6))
+)
+
+average_word_count_by_condition_all
+ggplot(average_word_count_by_condition_all, aes(x = gaze_condition, y = average_word_count, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  labs(title = "Comparison of Average Words Spoken Per Target Set by Gaze Condition", x = "Gaze Condition", y = "Average Word Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+```
+
+So people spoke less when they saw the student's gaze. Let's see whether this made them give more 'directional' instructions. Let's first check the percentage of directional instructions.
+
+Directional words:
+- right
+- left
+- down
+- up
+- straight
+- above
+- below
+- forward
+- behind
+- back
+- between
+- over
+- under
+- towards
+
+Okay so single file test first.
+
+```{r}
+
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+directional_words <- c("right", "left", "down", "up", "straight", "above", "below", "forward", "behind", "back", "between", "over", "under", "towards")
+
+
+word_count_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/DIB-019/word_counts.csv"
+print(word_count_path)
+
+word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_double(), task_id = col_double())) %>% clean_names() %>%
+  mutate(subject_id = substr(subject_id, 1, 7))
+
+# Remove start_round and end_round columns
+subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+word_count_data
+
+word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
+word_count_dt <- merge(word_count_dt, subject_rounds_dt_word_count, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+# Rename some columns back to where they were before
+word_count_dt <- word_count_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+  .[, gaze_condition.x := NULL] %>%
+  .[, task_condition.x := NULL] %>%
+  .[, gaze_condition.y := NULL] %>%
+  .[, task_condition.y := NULL] %>%
+  as.data.frame()
+
+word_count_dt <- word_count_dt %>% relocate(gaze_condition, .after = subject_id) %>% relocate(task_condition, .after = gaze_condition) %>% relocate(round_id, .after = task_id)
+word_count_dt
+
+# Need to compute the task_type column based on mod
+# mod 3 == 1 -> "Locate"
+# mod 3 == 2 -> "Puzzle"
+# mod 3 == 0 -> "Remaining"
+
+word_count_dt <- word_count_dt %>%
+  mutate(task_id = as.numeric(task_id)) %>%
+  setDT() %>% 
+  .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Puzzle"] %>% .[task_id %% 3 == 0, task_type := "Remaining"] %>% as.data.frame()
+word_count_dt
+
+# Now we calculate the total number of directional words for each condition
+word_count_dt_grouped <- word_count_dt %>%
+  group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+  summarise(
+    total_directional_words = sum(count[word %in% directional_words], na.rm = TRUE)  # Total number of directional words
+  ) %>%
+  ungroup()
+word_count_dt_grouped
+# Now calculate the percentage of directional words for each condition
+average_directional_words_by_condition <- word_count_dt_grouped %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(
+    average_directional_words = mean(total_directional_words, na.rm = TRUE)
+  ) %>%
+  ungroup()
+average_directional_words_by_condition
+
+
+```
+
+Now we do it for all files
+
+```{r}
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+#directional_words <- c("right", "left", "down", "up", "straight", "above", "below", "forward", "behind", "back", "between", "over", "under", "towards")
+directional_words <- c("right", "left", "down", "up")
+# Process each word count file and calculate the average percentage of directional words for each condition
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+average_directional_words_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/word_counts\\.csv$") %>%
+  map_dfr(.f = function(word_count_path) {
+    print(word_count_path)
+    word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_double(), task_id = col_double())) %>% clean_names() %>%
+      mutate(subject_id = substr(subject_id, 1, 7))
+
+    # Remove start_round and end_round columns
+    subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+
+    word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
+    word_count_dt <- merge(word_count_dt, subject_rounds_dt_word_count, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+    # Rename some columns back to where they were before
+    word_count_dt <- word_count_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+      .[, gaze_condition.x := NULL] %>%
+      .[, task_condition.x := NULL] %>%
+      .[, gaze_condition.y := NULL] %>%
+      .[, task_condition.y := NULL] %>%
+      as.data.frame()
+
+    word_count_dt <- word_count_dt %>% relocate(gaze_condition, .after = subject_id) %>% relocate(task_condition, .after = gaze_condition) %>% relocate(round_id, .after = task_id)
+    
+    # Need to compute the task_type column based on mod
+    # mod 3 == 1 -> "Locate"
+    # mod 3 == 2 -> "Puzzle"
+    # mod 3 == 0 -> "Remaining"
+    
+    word_count_dt <- word_count_dt %>%
+      mutate(task_id = as.numeric(task_id)) %>%
+      setDT() %>% 
+      .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Puzzle"] %>% .[task_id %% 3 == 0, task_type := "Remaining"] %>% as.data.frame()
+    word_count_dt
+    
+    # Now we calculate the total number of directional words for each condition
+    word_count_dt_grouped <- word_count_dt %>%
+      group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+      summarise(
+        total_directional_words = sum(count[word %in% directional_words], na.rm = TRUE)  # Total number of directional words
+      ) %>%
+      ungroup()
+    word_count_dt_grouped
+    # Now calculate the percentage of directional words for each condition
+    average_directional_words_by_condition <- word_count_dt_grouped %>%
+      group_by(subject_id, gaze_condition) %>%
+      summarise(
+        average_directional_words = mean(total_directional_words, na.rm = TRUE)
+      ) %>%
+      ungroup()
+    average_directional_words_by_condition
+})
+
+average_directional_words_by_condition_all
+```
+Now we plot it
+
+```{r}
+
+# Now pivot it wider
+average_directional_words_by_condition_all_wide <- average_directional_words_by_condition_all %>%
+  pivot_wider(names_from = gaze_condition, 
+              values_from = average_directional_words,
+              names_prefix = "average_directional_words_") %>%
+  as.data.frame()
+
+average_directional_words_by_condition_all_wide
+
+#Now we can plot the results using box and whiskers
+
+average_directional_words_by_condition_all_wide %>%
+  pivot_longer(cols = starts_with("average_directional_words"), names_to = "gaze_condition", values_to = "average_directional_words") %>%
+  ggplot(aes(x = gaze_condition, y = average_directional_words, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+  labs(title = "Comparison of Average Percentage of Directional Words by Gaze Condition", x = "Gaze Condition", y = "Average Percentage of Directional Words") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+
+```
+
+We may have a significant difference so we should test and see.
+
+```{r}
+
+# Now we can do the wilcoxon test
+directional_words_wilcox <- average_directional_words_by_condition_all %>%
+  wilcox_test(average_directional_words ~ gaze_condition, paired = TRUE)
+directional_words_wilcox.p <- directional_words_wilcox %>%
+  add_x_position(x = "gaze_condition")
+directional_words_wilcox
+
+```
+
+Looks like we have a significant difference, let's plot it.
+
+```{r}
+# Create a manual p-value annotation data frame
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 5, 
+  label = paste("p-value:", formatC(directional_words_wilcox$p, format = "f", digits = 6))
+)
+
+average_directional_words_by_condition_all
+ggplot(average_directional_words_by_condition_all, aes(x = gaze_condition, y = average_directional_words, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 6), breaks = seq(0, 6, 1)) +
+  labs(title = "Comparison of Average Number of Directional Words Per TS by Gaze Condition", x = "Gaze Condition", y="Average Number of Directional Words") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+```
+
+
+We want to do similar things for simple affirmations and negations. Let's first check the percentage of affirmations and negations.
+
+Affirmations:
+- yes
+- correct
+- right
+- true
+- sure
+- okay
+- yep
+- yeah
+- affirmative
+- indeed
+- absolutely
+- agreed
+- confirmed
+- fine
+- good
+- great
+- right
+- understood
+- OK
+- agreed
+- fine
+- good
+
+Negations:
+- no
+- incorrect
+- wrong
+- false
+- not
+- never
+- nope
+- nah
+
+Single file test first
+
+```{r}
+
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+affirmations <- c("yes", "correct", "right", "true", "sure", "okay", "yep", "yeah", "affirmative", "indeed", "absolutely", "agreed", "confirmed", "fine", "good", "great", "right", "understood", "OK", "agreed", "fine", "good")
+negations <- c("no", "incorrect", "wrong", "false", "not", "never", "nope", "nah")
+
+word_count_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/DIB-019/word_counts.csv"
+print(word_count_path)
+
+word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_double(), task_id = col_double())) %>% clean_names() %>%
+  mutate(subject_id = substr(subject_id, 1, 7))
+
+# Remove start_round and end_round columns
+subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+word_count_data
+
+word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
+word_count_dt <- merge(word_count_dt, subject_rounds_dt_word_count, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+# Rename some columns back to where they were before
+word_count_dt <- word_count_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+  .[, gaze_condition.x := NULL] %>%
+  .[, task_condition.x := NULL] %>%
+  .[, gaze_condition.y := NULL] %>%
+  .[, task_condition.y := NULL] %>%
+  as.data.frame()
+
+word_count_dt <- word_count_dt %>% relocate(gaze_condition, .after = subject_id) %>% relocate(task_condition, .after = gaze_condition) %>% relocate(round_id, .after = task_id)
+word_count_dt
+
+# Need to compute the task_type column based on mod
+# mod 3 == 1 -> "Locate"
+# mod 3 == 2 -> "Puzzle"
+# mod 3 == 0 -> "Remaining"
+
+word_count_dt <- word_count_dt %>%
+  mutate(task_id = as.numeric(task_id)) %>%
+  setDT() %>% 
+  .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Puzzle"] %>% .[task_id %% 3 == 0, task_type := "Remaining"] %>% as.data.frame()
+word_count_dt
+
+# Now we calculate the total number of affirmations and negations for each condition
+word_count_dt_grouped <- word_count_dt %>%
+  group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+  summarise(
+    total_affirmations = sum(count[word %in% affirmations], na.rm = TRUE),  # Total number of affirmations
+    total_negations = sum(count[word %in% negations], na.rm = TRUE)  # Total number of negations
+  ) %>%
+  ungroup()
+word_count_dt_grouped
+# Now calculate the percentage of affirmations and negations for each condition
+average_affirmations_negations_by_condition <- word_count_dt_grouped %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(
+    average_affirmations = mean(total_affirmations, na.rm = TRUE),
+    average_negations = mean(total_negations, na.rm = TRUE)
+  ) %>%
+  ungroup()
+average_affirmations_negations_by_condition
+
+```
+
+Now we do it for all files
+
+
+```{r}
+
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+affirmations <- c("yes", "correct", "right", "true", "sure", "okay", "yep", "yeah", "affirmative", "indeed", "absolutely", "agreed", "confirmed", "fine", "good", "great", "right", "understood", "OK", "agreed", "fine", "good")
+negations <- c("no", "incorrect", "wrong", "false", "not", "never", "nope", "nah")
+# Process each word count file and calculate the average percentage of directional words for each condition
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+average_affirmations_negations_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/word_counts\\.csv$") %>%
+  map_dfr(.f = function(word_count_path) {
+    print(word_count_path)
+    word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_double(), task_id = col_double())) %>% clean_names() %>%
+      mutate(subject_id = substr(subject_id, 1, 7))
+
+    # Remove start_round and end_round columns
+    subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+
+    word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
+    word_count_dt <- merge(word_count_dt, subject_rounds_dt_word_count, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+    # Rename some columns back to where they were before
+    word_count_dt <- word_count_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+      .[, gaze_condition.x := NULL] %>%
+      .[, task_condition.x := NULL] %>%
+      .[, gaze_condition.y := NULL] %>%
+      .[, task_condition.y := NULL] %>%
+      as.data.frame()
+
+    word_count_dt <- word_count_dt %>% relocate(gaze_condition, .after = subject_id) %>% relocate(task_condition, .after = gaze_condition) %>% relocate(round_id, .after = task_id)
+    
+    # Need to compute the task_type column based on mod
+    # mod 3 == 1 -> "Locate"
+    # mod 3 == 2 -> "Puzzle"
+    # mod 3 == 0 -> "Remaining"
+    
+    word_count_dt <- word_count_dt %>%
+      mutate(task_id = as.numeric(task_id)) %>%
+      setDT() %>% 
+      .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Puzzle"] %>% .[task_id %% 3 == 0, task_type := "Remaining"] %>% as.data.frame()
+    word_count_dt
+    
+    # Now we calculate the total number of affirmations and negations for each condition
+    word_count_dt_grouped <- word_count_dt %>%
+      group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+      summarise(
+        total_affirmations = sum(count[word %in% affirmations], na.rm = TRUE),  # Total number of affirmations
+        total_negations = sum(count[word %in% negations], na.rm = TRUE)  # Total number of negations
+      ) %>%
+      ungroup()
+    
+    # Now calculate the percentage of affirmations and negations for each condition
+    average_affirmations_negations_by_condition <- word_count_dt_grouped %>%
+      group_by(subject_id, gaze_condition) %>%
+      summarise(
+        average_affirmations = mean(total_affirmations, na.rm = TRUE),
+        average_negations = mean(total_negations, na.rm = TRUE)
+      ) %>%
+      ungroup()
+    
+    average_affirmations_negations_by_condition
+  })
+average_affirmations_negations_by_condition_all
+```
+
+Now we plot it (we will want to plot affirmations and negations separately)
+Let's start with affirmations
+
+```{r}
+
+# Now pivot it wider
+average_affirmations_negations_by_condition_all_wide <- average_affirmations_negations_by_condition_all %>%
+  pivot_wider(names_from = gaze_condition, 
+              values_from = average_affirmations,
+              names_prefix = "average_affirmations_") %>%
+  as.data.frame()
+
+average_affirmations_negations_by_condition_all_wide
+
+#Now we can plot the results using box and whiskers
+
+average_affirmations_negations_by_condition_all_wide %>%
+  pivot_longer(cols = starts_with("average_affirmations"), names_to = "gaze_condition", values_to = "average_affirmations") %>%
+  ggplot(aes(x = gaze_condition, y = average_affirmations, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, 1)) +
+  labs(title = "Comparison of Average Percentage of Affirmations by Gaze Condition", x = "Gaze Condition", y="Average Number of Affirmations") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+```
+
+We may have a significant difference so we should test and see.
+
+
+```{r}
+
+# Now we can do the wilcoxon test
+affirmations_wilcox <- average_affirmations_negations_by_condition_all %>%
+  wilcox_test(average_affirmations ~ gaze_condition, paired = TRUE)
+affirmations_wilcox.p <- affirmations_wilcox %>%
+  add_x_position(x = "gaze_condition")
+affirmations_wilcox
+
+```
+
+Looks like we have a significant difference, let's plot it.
+
+
+```{r}
+# Create a manual p-value annotation data frame
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 8, 
+  label = paste("p-value:", formatC(affirmations_wilcox$p, format = "f", digits = 6))
+)
+
+average_affirmations_negations_by_condition_all
+
+ggplot(average_affirmations_negations_by_condition_all, aes(x = gaze_condition, y = average_affirmations, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 8), breaks = seq(0, 8, 1)) +
+  labs(title = "Comparison of Average Number of Affirmations Per Target Set by Gaze Condition", x = "Gaze Condition", y= "Average Number of Affirmations") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+
+```
+
+Now we do the same for negations
+
+```{r}
+
+# Now pivot it wider
+average_affirmations_negations_by_condition_all_wide <- average_affirmations_negations_by_condition_all %>%
+  pivot_wider(names_from = gaze_condition, 
+              values_from = average_negations,
+              names_prefix = "average_negations_") %>%
+  as.data.frame()
+
+average_affirmations_negations_by_condition_all_wide
+
+#Now we can plot the results using box and whiskers
+
+average_affirmations_negations_by_condition_all_wide %>%
+  pivot_longer(cols = starts_with("average_negations"), names_to = "gaze_condition", values_to = "average_negations") %>%
+  ggplot(aes(x = gaze_condition, y = average_negations, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 5), breaks = seq(0, 5, 1)) +
+  labs(title = "Comparison of Average Number of Corrections by Gaze Condition", x = "Gaze Condition", y= "Average Number of Negations") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
+
+
+```
+
+We may have a significant difference so we should test and see.
+
+```{r}
+
+# Now we can do the wilcoxon test
+
+negations_wilcox <- average_affirmations_negations_by_condition_all %>%
+  wilcox_test(average_negations ~ gaze_condition, paired = TRUE)
+
+negations_wilcox.p <- negations_wilcox %>%
+  add_x_position(x = "gaze_condition")
+negations_wilcox
+
+```
+
+Looks like we have a significant difference, let's plot it.
+
+```{r}
+# Create a manual p-value annotation data frame
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 4, 
+  label = paste("p-value:", formatC(negations_wilcox$p, format = "f", digits = 6))
+)
+
+average_affirmations_negations_by_condition_all
+
+ggplot(average_affirmations_negations_by_condition_all, aes(x = gaze_condition, y = average_negations, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  scale_y_continuous(limits = c(0, 4), breaks = seq(0, 4, 1)) +
+  labs(title = "Comparison of Average Number of Corrections Per Target Set by Gaze Condition", x = "Gaze Condition", y= "Average Number of Negations") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+
+```
+
+Key takeaways -
+- People spoke less overall when they saw the student's gaze
+- People needed to correct the student more when they did not see the student's gaze
+- People needed to use more directional words to guide the student when they did not see the student's gaze
+- People needed to use more affirmations when they did not see the student's gaze
+- People looked at the student more when they did not see the student's gaze
+
+
+
+Now we want to just do the background questionnaire data
+
+```{r}
+# Load the background questionnaire data
+background_questionnaire_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/questionnaireData.csv"
+
+background_questionnaire_data <- read_csv(background_questionnaire_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
+background_questionnaire_data
+
+# Now we just want to summarize the median age and get the count of each gender (female, male, non-binary), we also need a count of vr_experience, tutor_experience, and geology_experience, we also need the min and max age
+background_questionnaire_summary <- background_questionnaire_data %>%
+  summarise(
+    median_age = median(age, na.rm = TRUE),
+    min_age = min(age, na.rm = TRUE),
+    max_age = max(age, na.rm = TRUE),
+    count_female = sum(gender == "Female", na.rm = TRUE),
+    count_male = sum(gender == "Male", na.rm = TRUE),
+    count_non_binary = sum(gender == "Non-Binary", na.rm = TRUE),
+    count_vr_experience = sum(vr_experience, na.rm = TRUE),
+    count_tutor_experience = sum(tutor_experience, na.rm = TRUE),
+    count_geology_experience = sum(geology_experience, na.rm = TRUE)
+  )
+background_questionnaire_summary
+
+```
