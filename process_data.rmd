@@ -56,6 +56,7 @@ library(textclean)
 # Function to process each directory
 library(tidyverse)
 library(stringr)
+library(patchwork)
 
 na_strings <- c("NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "NaN", "nan", "Inf", "-Inf", "inf", "-inf", "", " ")
 names_with_indices <- function(data) {
@@ -293,10 +294,17 @@ aggregated_ratings <- subject_ratings %>%
   mutate(renamed_question = ifelse(grepl("Question - How well were you able to predict", question), "Predict", renamed_question)) %>%
   mutate(renamed_question = ifelse(grepl("Question - How would you rate your understanding", question), "Focus", renamed_question)) %>%
   mutate(renamed_question = ifelse(grepl("Question - How would you rate your awareness", question), "Awareness", renamed_question)) %>%
-  mutate(renamed_question = ifelse(grepl("Question - How complex were your instructions when guiding", question), "Complex", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How complex were your instructions when guiding", question), "Complex", renamed_question))
+
+# So now we want to keep this in a separate variable
+processed_ratings <- aggregated_ratings
+
+
+aggregated_ratings <- aggregated_ratings %>%
   group_by(subject_id, renamed_question, gaze_condition) %>%
   summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
   
+  processed_ratings
   aggregated_ratings
   # Split the data frame by question
   questions_list <- split(aggregated_ratings, aggregated_ratings$renamed_question)
@@ -407,6 +415,22 @@ wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Focus)) +
   stat_pvalue_manual(focus_wilcox, label='p', hide.ns = T,
                      y.position = c(5.5))
 
+#Now do it for Predict
+
+predict_wilcox <- wide_ratings_for_plots |> wilcox_test( Predict ~ gaze_condition, paired=T)
+predict_wilcox.p <- predict_wilcox |> add_x_position(x="gaze_condiition")
+predict_wilcox
+
+wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Predict)) + 
+  geom_count() +
+  stat_summary(fun="median", geom="point", colour="orange") +
+  coord_cartesian(ylim=c(1,6)) +
+  scale_y_continuous(breaks=seq(1,5,1)) +
+  theme_classic() +
+  labs(title="How well were you able to predict the student's actions?", x="", y="") +
+  stat_pvalue_manual(predict_wilcox, label='p', hide.ns = T,
+                     y.position = c(5.5))
+
 
 
 test_result_awareness <- perform_wilcox_test(wide_ratings, "Complex")
@@ -452,8 +476,64 @@ test_results
 question_types
 wide_ratings
 #write_csv(wide_ratings, paste0(path_to_files, "wide_ratings_test.csv"))
-```
 
+
+# Get a total count of the number of ratings for each question broken down by 1, 2, 3, 4, 5
+summed_ratings <- processed_ratings %>%
+  group_by(gaze_condition, renamed_question, rating) %>%
+  summarise(count = n(), .groups = "drop")
+
+summed_ratings
+
+# Now we want horizontal stacked bar charts for each question type with the legend on the top-center as discrete values
+
+# Plot the stacked bar chart for each question type, so the x-axis is the count, y-axis is the gaze condition, and we have 'stacked' grouped bar charts for each rating to show distribution. Let's start with Awareness
+
+
+# Define a darker grayscale theme for each rating number using material design shades
+rating_colors <- c(
+  "1" = "#E0E0E0",  # Material light gray (darker)
+  "2" = "#BDBDBD",  # Material gray
+  "3" = "#9E9E9E",  # Material medium gray
+  "4" = "#757575",  # Material dark gray
+  "5" = "#424242"   # Material very dark gray (darker)
+)
+
+# Filter the data for Awareness
+awareness_data <- summed_ratings %>% filter(renamed_question == "Awareness")
+# Ensure the rating is a factor with levels ordered from 1 to 5
+awareness_data$rating <- factor(awareness_data$rating, levels = c("1", "2", "3", "4", "5"))
+
+# Create the plot for Awareness
+awareness_plot <- ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.5) +  # Adjust bar width
+  scale_fill_manual(values = rating_colors) +
+  labs(title = "Awareness Ratings by Gaze Condition", x = "", y = "Awareness") +
+  scale_y_discrete(labels = c("off" = "Gaze Off", "on" = "Gaze On")) +
+  theme_minimal() +
+  theme(legend.position = "top", legend.justification = "center", 
+        axis.text.y = element_text(size = 8),  # Reduce font size
+        axis.title.y = element_text(size = 10))
+
+# Plot the Awareness data
+awareness_plot
+
+```
+```{r awareness-plot, fig.height=2, fig.width=8}
+# Filter the data for Awareness
+awareness_data <- summed_ratings %>% filter(renamed_question == "Awareness")
+# Ensure the rating is a factor with levels ordered from 1 to 5
+awareness_data$rating <- factor(awareness_data$rating, levels = c("1", "2", "3", "4", "5"))
+ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +  # Adjust bar width
+  scale_fill_manual(values = rating_colors) +
+  labs(title = "", x = "", y = "Awareness") +
+  scale_y_discrete(labels = c("off" = "Gaze Off", "on" = "Gaze On")) +
+  theme_minimal() +
+  theme(legend.position = "top", legend.justification = "center", 
+        axis.text.y = element_text(size = 8),  # Reduce font size
+        axis.title.y = element_text(size = 10))
+```
 
 
 ```{r}
