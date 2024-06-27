@@ -57,6 +57,9 @@ library(textclean)
 library(tidyverse)
 library(stringr)
 library(patchwork)
+library(coin)
+library(rcompanion)
+library(rstatix)
 
 na_strings <- c("NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "NaN", "nan", "Inf", "-Inf", "inf", "-inf", "", " ")
 names_with_indices <- function(data) {
@@ -114,6 +117,52 @@ fix_csv_header_cols <- function(file_path, additional_columns, suffix = "_fixed.
   
   return(new_file_path)
 }
+
+# Function to compute Z value and print Z, N, and p
+compute_wilcox_summary <- function(wilcox_result) {
+  # Calculate Z value using the normal approximation
+  # Z = (W - mean(W)) / sd(W)
+  # mean(W) = n1 * n2 / 2
+  # sd(W) = sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
+  wilcox_result <- wilcox_result %>%
+    mutate(
+      mean_W = n1 * n2 / 2,
+      sd_W = sqrt(n1 * n2 * (n1 + n2 + 1) / 12),
+      Z = (statistic - mean_W) / sd_W,
+      N = n1 + n2
+    )
+  
+  # Print the results in a more readable format
+  print(sprintf("Z = %.5f, N = %d, p = %.5f", wilcox_result$Z, wilcox_result$N, wilcox_result$p))
+  
+  
+  # Return the modified result with Z value
+  return(wilcox_result)
+}
+
+# Function to compute Z value for Wilcoxon signed-rank test results from rstatix
+compute_wilcoxon_signed_rank_summary <- function(wilcox_result) {
+  # Extract necessary components from the result
+  n <- wilcox_result$n1  # Assuming n1 and n2 are the same because it's a paired test
+  T <- wilcox_result$statistic
+  
+  # Calculate mean and standard error under H0
+  mn = n * (n + 1) / 4
+  se = sqrt(n * (n + 1) * (2 * n + 1) / 24)
+  
+  # Continuity correction
+  correction = 0.5
+  
+  # Calculate Z value
+  Z = (T - mn - correction) / se
+  
+  # Print formatted results
+  print(sprintf("Z = %.4f, N = %d, p = %.5f", Z, n, wilcox_result$p))
+  
+  # Return a list with the computed values
+  return(list(Z = Z, N = n, p = wilcox_result$p))
+}
+
 
 #path_to_files <- "C:\\DataTest\\"
 #path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
@@ -357,6 +406,24 @@ wide_ratings_for_plots <- wide_ratings_for_plots %>% mutate(gaze_condition = fac
   awareness_wilcox <- wide_ratings_for_plots |> rstatix::wilcox_test( Awareness ~ gaze_condition, paired=T) 
   awareness_wilcox.p <- awareness_wilcox |> add_x_position(x="gaze_condition")
   awareness_wilcox
+  print("Z for Awareness")
+  compute_wilcoxon_signed_rank_summary(awareness_wilcox)
+  
+  
+wide_ratings_for_plots
+
+# Filter data for 'On' and 'Off' conditions for the 'Awareness' variable
+x_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(Awareness)
+
+y_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(Awareness)
+
+# Calculate the Wilcoxon Z statistic for paired data
+z_awareness <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 3)
+print(paste("Z for Awareness:", z_awareness))
 
 wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Awareness)) + 
   geom_count() +
@@ -369,9 +436,22 @@ wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Awareness)) +
                      y.position = c(5.5))
 
 #Now do it for Confident
-confident_wilcox <- wide_ratings_for_plots |> wilcox_test( Confident ~ gaze_condition, paired=T)
+confident_wilcox <- wide_ratings_for_plots |> rstatix::wilcox_test( Confident ~ gaze_condition, paired=T)
 confident_wilcox.p <- confident_wilcox |> add_x_position(x="gaze_condiition")
 confident_wilcox
+print("Z for Confident")
+compute_wilcoxon_signed_rank_summary(confident_wilcox)
+
+x_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(Confident)
+
+y_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(Confident)
+
+z_confident <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 3)
+print(paste("Z for Confident:", z_confident))
 
 wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Confident)) + 
   geom_count() +
@@ -385,9 +465,21 @@ wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Confident)) +
 
 #Now do it for Ease
 
-ease_wilcox <- wide_ratings_for_plots |> wilcox_test( Ease ~ gaze_condition, paired=T)
+ease_wilcox <- wide_ratings_for_plots |> rstatix::wilcox_test( Ease ~ gaze_condition, paired=T)
 ease_wilcox.p <- ease_wilcox |> add_x_position(x="gaze_condiition")
 ease_wilcox
+print("Z for Ease")
+compute_wilcoxon_signed_rank_summary(ease_wilcox)
+x_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(Ease)
+
+y_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(Ease)
+
+z_ease <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 3)
+print(paste("Z for Ease:", z_ease))
 
 wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Ease)) + 
   geom_count() +
@@ -401,9 +493,22 @@ wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Ease)) +
 
 #Now do it for Focus
 
-focus_wilcox <- wide_ratings_for_plots |> wilcox_test( Focus ~ gaze_condition, paired=T)
+focus_wilcox <- wide_ratings_for_plots |> rstatix::wilcox_test( Focus ~ gaze_condition, paired=T)
 focus_wilcox.p <- focus_wilcox |> add_x_position(x="gaze_condiition")
 focus_wilcox
+print("Z for Focus")
+compute_wilcoxon_signed_rank_summary(focus_wilcox)
+
+x_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(Focus)
+
+y_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(Focus)
+
+z_focus <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 3)
+print(paste("Z for Focus:", z_focus))
 
 wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Focus)) + 
   geom_count() +
@@ -417,9 +522,22 @@ wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Focus)) +
 
 #Now do it for Predict
 
-predict_wilcox <- wide_ratings_for_plots |> wilcox_test( Predict ~ gaze_condition, paired=T)
+predict_wilcox <- wide_ratings_for_plots |> rstatix::wilcox_test( Predict ~ gaze_condition, paired=T)
 predict_wilcox.p <- predict_wilcox |> add_x_position(x="gaze_condiition")
 predict_wilcox
+print("Z for Predict")
+compute_wilcoxon_signed_rank_summary(predict_wilcox)
+
+x_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(Predict)
+
+y_data <- wide_ratings_for_plots %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(Predict)
+
+z_predict <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 3)
+print(paste("Z for Predict:", z_predict))
 
 wide_ratings_for_plots %>% ggplot(aes(x=gaze_condition, y=Predict)) + 
   geom_count() +
@@ -448,7 +566,7 @@ test_result_focus
 test_result_predict <- perform_wilcox_test(wide_ratings, "Predict")
 test_result_predict
 
-awareness_wilcox <- wide_ratings_for_plots |> wilcox_test( Awareness ~ gaze_condition, paired=T) 
+awareness_wilcox <- wide_ratings_for_plots |> rstatix::wilcox_test( Awareness ~ gaze_condition, paired=T) 
 awareness_wilcox.p <- awareness_wilcox |> add_x_position(x="gaze_condiition")
 awareness_wilcox
 
@@ -518,6 +636,69 @@ awareness_plot <- ggplot(awareness_data, aes(x = count, y = gaze_condition, fill
 # Plot the Awareness data
 awareness_plot
 
+
+# Filter the data for Awareness and ensure the rating is a factor
+awareness_data <- summed_ratings %>% filter(renamed_question == "Awareness")
+awareness_data$rating <- factor(awareness_data$rating, levels = c("1", "2", "3", "4", "5"))
+awareness_plot <- ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
+  scale_fill_manual(values = rating_colors) +
+  labs(title = "", x = "", y = "Awareness") +
+  scale_y_discrete(labels = c("off" = "Gaze Off", "on" = "Gaze On")) +
+  theme_minimal() +
+  theme(legend.position = "top", legend.justification = "center", 
+        axis.text.y = element_text(size = 8), 
+        axis.title.y = element_text(size = 10))
+
+# Repeat for other question types
+# Confident
+confident_data <- summed_ratings %>% filter(renamed_question == "Confident")
+confident_data$rating <- factor(confident_data$rating, levels = c("1", "2", "3", "4", "5"))
+confident_plot <- ggplot(confident_data, aes(x = count, y = gaze_condition, fill = rating)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
+  scale_fill_manual(values = rating_colors) +
+  labs(title = "", x = "", y = "Confident") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Ease
+ease_data <- summed_ratings %>% filter(renamed_question == "Ease")
+ease_data$rating <- factor(ease_data$rating, levels = c("1", "2", "3", "4", "5"))
+ease_plot <- ggplot(ease_data, aes(x = count, y = gaze_condition, fill = rating)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
+  scale_fill_manual(values = rating_colors) +
+  labs(title = "", x = "", y = "Ease") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Focus
+focus_data <- summed_ratings %>% filter(renamed_question == "Focus")
+focus_data$rating <- factor(focus_data$rating, levels = c("1", "2", "3", "4", "5"))
+focus_plot <- ggplot(focus_data, aes(x = count, y = gaze_condition, fill = rating)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
+  scale_fill_manual(values = rating_colors) +
+  labs(title = "", x = "", y = "Focus") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Predict
+predict_data <- summed_ratings %>% filter(renamed_question == "Predict")
+predict_data$rating <- factor(predict_data$rating, levels = c("1", "2", "3", "4", "5"))
+predict_plot <- ggplot(predict_data, aes(x = count, y = gaze_condition, fill = rating)) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
+  scale_fill_manual(values = rating_colors) +
+  labs(title = "", x = "", y = "Predict") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Combine plots using patchwork
+combined_plot <- awareness_plot / confident_plot / ease_plot / focus_plot / predict_plot +
+  plot_layout(heights = c(1, 1, 1, 1, 1))  # Equal heights for each plot
+combined_plot
+
+#What's the total number of responses overall for awareness?
+total_responses <- summed_ratings %>% filter(renamed_question == "Awareness") %>% summarise(total_responses = sum(count))
+total_responses
 ```
 ```{r awareness-plot, fig.height=2, fig.width=8}
 # Filter the data for Awareness
@@ -535,6 +716,10 @@ ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
         axis.title.y = element_text(size = 10))
 ```
 
+```{r combined-plot, fig.height=10, fig.width=8}
+combined_plot <- awareness_plot / confident_plot / ease_plot / focus_plot / predict_plot
+combined_plot
+```
 
 ```{r}
 
@@ -581,9 +766,22 @@ wide_mean_durations <- wide_mean_durations %>% as.data.frame()
 wide_mean_durations
 # Perform Wilcoxon signed-rank test using rstatix
 duration_wilcox <- wide_mean_durations %>%
-  wilcox_test(mean_duration ~ gaze_condition, paired = TRUE)
+  rstatix::wilcox_test(mean_duration ~ gaze_condition, paired = TRUE)
 duration_wilcox.p <- duration_wilcox |> add_x_position(x="gaze_condition")
 duration_wilcox 
+print("Z for Duration")
+compute_wilcox_summary(duration_wilcox)
+x_data <- wide_mean_durations %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(mean_duration)
+y_data <- wide_mean_durations %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(mean_duration)
+
+z_duration <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 5)
+z_duration
+print(paste("Z for Duration:", z_duration))
+
 
 ```
 
@@ -614,6 +812,34 @@ ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = ga
   theme_minimal() +
   scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
   geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+```
+
+Paper-friendly version of the plot that can be customized.
+```{r duration-plot, fig.height=3, fig.width=3}
+# Plotting the results. We don't want the p-value label. We don't want to have the x-axis labeled as Gaze Condition. The x-axis labels should instead be "Gaze Off" and "Gaze On". We do not want the legend. We do not want the title. Finally, we want to have error bars show up as well.
+
+wide_mean_durations
+# Calculate summary statistics
+summary_round_durations <- round_durations %>%
+  group_by(gaze_condition) %>%
+  summarise(mean_duration = mean(round_duration, na.rm = TRUE),
+            sd_duration = sd(round_duration, na.rm = TRUE))
+
+summary_round_durations
+# Plot using wide_mean_durations for the boxplot and jitter, and summary_mean_durations for error bars with horizontal caps
+ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = gaze_condition)) +
+  geom_boxplot(width = 0.7) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  geom_errorbar(data = summary_round_durations, aes(ymin = mean_duration - sd_duration, ymax = mean_duration + sd_duration, x = gaze_condition), width = 0.6, color = "black") +
+  # Adding horizontal end caps
+  #geom_segment(data = summary_round_durations, aes(x = as.numeric(as.factor(gaze_condition)) - 0.1, xend = as.numeric(as.factor(gaze_condition)) + 0.1, y = mean_duration - sd_duration, yend = mean_duration - sd_duration), color = "black") +
+  #geom_segment(data = summary_round_durations, aes(x = as.numeric(as.factor(gaze_condition)) - 0.1, xend = as.numeric(as.factor(gaze_condition)) + 0.1, y = mean_duration + sd_duration, yend = mean_duration + sd_duration), color = "black") +
+  scale_y_continuous(limits = c(0, 350), breaks = seq(0, 350, 100)) +
+  labs(title = "", x = "", y = "Mean Duration (in seconds)") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("Off" = "Gaze Off", "On" = "Gaze On"))
 ```
 
 
@@ -698,15 +924,15 @@ walk(directories, process_directory)
 
 ```{r}
 directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\QWE-042"
-  timings_path <- file.path(directory_path, "timings_updated.csv")
-  words_path <- file.path(directory_path, "words.csv")
-  participant_data_path <- file.path(directory_path, "participantData.csv")
-  print(directory_path)
+timings_path <- file.path(directory_path, "timings_updated.csv")
+words_path <- file.path(directory_path, "words.csv")
+participant_data_path <- file.path(directory_path, "participantData.csv")
+print(directory_path)
   
-    timings <- read_csv(timings_path, na = na_strings, show_col_types = FALSE)
-    words <- read_csv(words_path, na = na_strings, show_col_types = FALSE)
-    participant_data <- read_csv(participant_data_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
-    print(timings_path)
+timings <- read_csv(timings_path, na = na_strings, show_col_types = FALSE)
+words <- read_csv(words_path, na = na_strings, show_col_types = FALSE)
+participant_data <- read_csv(participant_data_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
+print(timings_path)
     #timings
     #words
     #participant_data
@@ -773,6 +999,7 @@ directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Comm
 
 
 ```
+
 
 
 ```{r}
@@ -1319,15 +1546,27 @@ average_object_percent_by_condition_all_wide
 
 #Now we can do the wilcoxon test
 looking_at_object_wilcox <- average_object_percent_by_condition_all %>%
-  wilcox_test(average_percent_looking_at_object ~ gaze_condition, paired = TRUE)
+  rstatix::wilcox_test(average_percent_looking_at_object ~ gaze_condition, paired = TRUE)
 looking_at_object_wilcox.p <- looking_at_object_wilcox %>%
   add_x_position(x = "gaze_condition")
 looking_at_object_wilcox
+
 
 #Okay there is a sig diff, now we do it the wilcox.test way so we can plot it
 
 looking_at_object_wilcox_test <- wilcox.test(average_object_percent_by_condition_all$average_percent_looking_at_object[average_object_percent_by_condition_all$gaze_condition == "Off"], average_object_percent_by_condition_all$average_percent_looking_at_object[average_object_percent_by_condition_all$gaze_condition == "On"], paired = TRUE)
 looking_at_object_wilcox_test
+print("Z for Looking at Object")
+#compute_wilcox_summary(looking_at_object_wilcox_test)
+
+x_data <- average_object_percent_by_condition_all %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(average_percent_looking_at_object)
+y_data <- average_object_percent_by_condition_all %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(average_percent_looking_at_object)
+z_object <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 5)
+print(paste("Z for Object:", z_object))
 
 # Create a manual p-value annotation data frame
 p_value_data <- data.frame(
@@ -1422,7 +1661,7 @@ subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_
 average_word_count_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/word_counts\\.csv$") %>%
   map_dfr(.f = function(word_count_path) {
     print(word_count_path)
-    word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_character(), task_id = col_character())) %>% clean_names() %>%
+    word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_double(), task_id = col_double())) %>% clean_names() %>%
       mutate(subject_id = substr(subject_id, 1, 7))
 
     # Remove start_round and end_round columns
@@ -1470,6 +1709,50 @@ average_word_count_by_condition_all <- fs::dir_ls(path = path_to_files, recurse 
     average_word_count_by_condition
   })
 average_word_count_by_condition_all
+
+word_count_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/word_counts\\.csv$") %>%
+  map_dfr(.f = function(word_count_path) {
+    print(word_count_path)
+    word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_double(), task_id = col_double())) %>% clean_names() %>%
+      mutate(subject_id = substr(subject_id, 1, 7))
+
+    # Remove start_round and end_round columns
+    subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+
+    word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
+    word_count_dt <- merge(word_count_dt, subject_rounds_dt_word_count, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+    # Rename some columns back to where they were before
+    word_count_dt <- word_count_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
+      .[, gaze_condition.x := NULL] %>%
+      .[, task_condition.x := NULL] %>%
+      .[, gaze_condition.y := NULL] %>%
+      .[, task_condition.y := NULL] %>%
+      as.data.frame()
+
+    word_count_dt <- word_count_dt %>% relocate(gaze_condition, .after = subject_id) %>% relocate(task_condition, .after = gaze_condition) %>% relocate(round_id, .after = task_id)
+
+    # Need to compute the task_type column based on mod
+    # mod 3 == 1 -> "Locate"
+    # mod 3 == 2 -> "Puzzle"
+    # mod 3 == 0 -> "Remaining"
+
+    word_count_dt <- word_count_dt %>%
+      mutate(task_id = as.numeric(task_id)) %>%
+      setDT() %>% 
+      .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Puzzle"] %>% .[task_id %% 3 == 0, task_type := "Remaining"] %>% as.data.frame()
+    
+    # Calculate the total word count for each condition
+    word_count_dt_grouped <- word_count_dt %>%
+      group_by(subject_id, round_id, task_id, task_type, gaze_condition, task_condition) %>%
+      summarise(
+        total_words = sum(count, na.rm = TRUE)  # Total word count
+      ) %>%
+      ungroup()
+    word_count_dt_grouped
+  })
+
+word_count_by_condition_all
 ```
 
 Now we plot it
@@ -1502,10 +1785,21 @@ We may have a significant difference so we should test and see.
 ```{r}
 # Now we can do the wilcoxon test
 word_count_wilcox <- average_word_count_by_condition_all %>%
-  wilcox_test(average_word_count ~ gaze_condition, paired = TRUE)
+  rstatix::wilcox_test(average_word_count ~ gaze_condition, paired = TRUE)
 word_count_wilcox.p <- word_count_wilcox %>%
   add_x_position(x = "gaze_condition")
 word_count_wilcox
+print("Z for Word Count")
+compute_wilcox_summary(word_count_wilcox)
+
+x_data <- average_word_count_by_condition_all %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(average_word_count)
+y_data <- average_word_count_by_condition_all %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(average_word_count)
+z_word_count <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 3)
+print(paste("Z for Word Count:", z_word_count))
 ```
 Looks like we have a significant difference, let's plot it.
 
@@ -1704,11 +1998,23 @@ We may have a significant difference so we should test and see.
 
 # Now we can do the wilcoxon test
 directional_words_wilcox <- average_directional_words_by_condition_all %>%
-  wilcox_test(average_directional_words ~ gaze_condition, paired = TRUE)
+  rstatix::wilcox_test(average_directional_words ~ gaze_condition, paired = TRUE)
 directional_words_wilcox.p <- directional_words_wilcox %>%
   add_x_position(x = "gaze_condition")
 directional_words_wilcox
 
+print("Z for Directional Words")
+compute_wilcox_summary(directional_words_wilcox)
+compute_wilcoxon_signed_rank_summary(directional_words_wilcox)
+x_data <- average_directional_words_by_condition_all %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(average_directional_words)
+y_data <- average_directional_words_by_condition_all %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(average_directional_words)
+
+z_directional_words <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 5)
+print(paste("Z for Directional Words:", z_directional_words))
 ```
 
 Looks like we have a significant difference, let's plot it.
@@ -1934,10 +2240,25 @@ We may have a significant difference so we should test and see.
 
 # Now we can do the wilcoxon test
 affirmations_wilcox <- average_affirmations_negations_by_condition_all %>%
-  wilcox_test(average_affirmations ~ gaze_condition, paired = TRUE)
+  rstatix::wilcox_test(average_affirmations ~ gaze_condition, paired = TRUE)
 affirmations_wilcox.p <- affirmations_wilcox %>%
   add_x_position(x = "gaze_condition")
 affirmations_wilcox
+
+print("Z for Affirmations")
+compute_wilcox_summary(affirmations_wilcox)
+
+average_affirmations_negations_by_condition_all
+
+x_data <- average_affirmations_negations_by_condition_all %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(average_affirmations)
+y_data <- average_affirmations_negations_by_condition_all %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(average_affirmations)
+
+z_affirmations <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 5)
+print(paste("Z for Affirmations:", z_affirmations))
 
 ```
 
@@ -2000,11 +2321,24 @@ We may have a significant difference so we should test and see.
 # Now we can do the wilcoxon test
 
 negations_wilcox <- average_affirmations_negations_by_condition_all %>%
-  wilcox_test(average_negations ~ gaze_condition, paired = TRUE)
+  rstatix::wilcox_test(average_negations ~ gaze_condition, paired = TRUE)
 
 negations_wilcox.p <- negations_wilcox %>%
   add_x_position(x = "gaze_condition")
 negations_wilcox
+
+print("Z for Negations")
+compute_wilcox_summary(negations_wilcox)
+
+x_data <- average_affirmations_negations_by_condition_all %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(average_negations)
+y_data <- average_affirmations_negations_by_condition_all %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(average_negations)
+
+z_negations <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 3)
+print(paste("Z for Negations:", z_negations))
 
 ```
 
@@ -2064,4 +2398,151 @@ background_questionnaire_summary <- background_questionnaire_data %>%
   )
 background_questionnaire_summary
 
+```
+
+
+
+
+We now want alllllllll the plots in one place with patchwork that are in paper-friendly format so for example:
+```{r duration-plot, fig.height=3, fig.width=3}
+# Plotting the results. We don't want the p-value label. We don't want to have the x-axis labeled as Gaze Condition. The x-axis labels should instead be "Gaze Off" and "Gaze On". We do not want the legend. We do not want the title. Finally, we want to have error bars show up as well.
+
+wide_mean_durations
+# Calculate summary statistics
+summary_round_durations <- round_durations %>%
+  group_by(gaze_condition) %>%
+  summarise(mean_duration = mean(round_duration, na.rm = TRUE),
+            sd_duration = sd(round_duration, na.rm = TRUE))
+
+summary_round_durations
+# Plot using wide_mean_durations for the boxplot and jitter, and summary_mean_durations for error bars with horizontal caps
+ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = gaze_condition)) +
+  geom_boxplot(width = 0.7) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  geom_errorbar(data = summary_round_durations, aes(ymin = mean_duration - sd_duration, ymax = mean_duration + sd_duration, x = gaze_condition), width = 0.6, color = "black") +
+  # Adding horizontal end caps
+  #geom_segment(data = summary_round_durations, aes(x = as.numeric(as.factor(gaze_condition)) - 0.1, xend = as.numeric(as.factor(gaze_condition)) + 0.1, y = mean_duration - sd_duration, yend = mean_duration - sd_duration), color = "black") +
+  #geom_segment(data = summary_round_durations, aes(x = as.numeric(as.factor(gaze_condition)) - 0.1, xend = as.numeric(as.factor(gaze_condition)) + 0.1, y = mean_duration + sd_duration, yend = mean_duration + sd_duration), color = "black") +
+  scale_y_continuous(limits = c(0, 350), breaks = seq(0, 350, 100)) +
+  labs(title = "", x = "", y = "Mean Duration (in seconds)") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("Off" = "Gaze Off", "On" = "Gaze On"))
+```
+
+```{r word-count-plot, fig.height=3, fig.width=3}
+# Summary statistics
+word_count_by_condition_all
+summary_word_count <- word_count_by_condition_all %>%
+  group_by(gaze_condition) %>%
+  summarise(mean_word_count = mean(total_words, na.rm = TRUE),
+            sd_word_count = sd(total_words, na.rm = TRUE))
+average_word_count_by_condition_all
+summary_word_count
+word_count_by_condition_all
+# Plot with errors bars
+ggplot(word_count_by_condition_all, aes(x = gaze_condition, y = average_word_count, fill = gaze_condition)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  #geom_errorbar(data = summary_word_count, aes(ymin = mean_word_count - sd_word_count, ymax = mean_word_count + sd_word_count, x = gaze_condition), width = 0.6, color = "black") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  labs(title = "", x = "", y = "Average Word Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("Off" = "Gaze Off", "On" = "Gaze On"))
+```
+
+
+Finally, combine with patchwork.
+```{r combined-all-plots, fig.height=3, fig.width=3}
+```
+
+
+Load all the data and combine the segments and timings into one data frame.
+```{r}
+
+# Load the data
+directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\QWE-042"
+timings_path <- file.path(directory_path, "timings_updated.csv")
+segments_path <- file.path(directory_path, "segments.csv")
+
+timings <- read_csv(timings_path, show_col_types = FALSE)
+segments <- read_csv(segments_path, show_col_types = FALSE)
+
+# Process segments and join with timings
+segments_per_round <- segments %>%
+  mutate(text = tolower(text),  # Convert text to lower case
+         text = str_trim(text),  # Trim whitespace
+         text = replace_contraction(text),  # Replace contractions using textclean
+         text = str_replace_all(text, "[[:punct:]]", "")) %>%  # Remove punctuation
+  mutate(across(c(start, end), as.numeric))
+  
+
+timings_dt <- setDT(timings)
+segments_per_round_dt <- setDT(segments_per_round) %>% .[timings_dt, on = .(start <= end, end >= start), allow.cartesian = TRUE]
+segments_per_round <- segments_per_round_dt %>% as.data.frame()
+    
+  #right_join(timings, by = character()) %>%
+  #filter(start >= start.x & end <= end.x) %>%
+  #select(round, task, start = start.x, end = end.x, text)
+segments_per_round <- segments_per_round %>% relocate(round, task, start, end, text)
+# Combine text for each round and task
+combined_text_per_round <- segments_per_round %>%
+  group_by(round, task, start, end) %>%
+  summarise(combined_text = paste(text, collapse = " "), .groups = 'drop')  # Combine text entries into a single string
+
+combined_text_per_round
+# Save the result to a new CSV file
+#write_csv(combined_text_per_round, file.path(directory_path, "combined_text_per_round.csv"))
+
+# Print path to confirm where the file is saved
+#print(file.path(directory_path, "segments_per_round.csv"))
+
+```
+
+
+Now we want to do it for all the participants using map_dfr
+```{r}
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+combined_segments_per_round_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/timings_updated.csv$") %>%
+  map_dfr(.f = function(timings_updated_path) {
+    print(timings_updated_path)
+    segments_path <- str_replace(timings_updated_path, "timings_updated.csv", "segments.csv")
+    timings <- read_csv(timings_updated_path, show_col_types = FALSE)
+    segments <- read_csv(segments_path, show_col_types = FALSE)
+    
+    # Process segments and join with timings
+    segments_per_round <- segments %>%
+      mutate(text = tolower(text),  # Convert text to lower case
+             text = str_trim(text),  # Trim whitespace
+             text = replace_contraction(text),  # Replace contractions using textclean
+             text = str_replace_all(text, "[[:punct:]]", "")) %>%  # Remove punctuation
+      mutate(across(c(start, end), as.numeric))
+      
+    
+    timings_dt <- setDT(timings)
+    segments_per_round_dt <- setDT(segments_per_round) %>% .[timings_dt, on = .(start <= end, end >= start), allow.cartesian = TRUE]
+    segments_per_round <- segments_per_round_dt %>% as.data.frame()
+        
+      #right_join(timings, by = character()) %>%
+      #filter(start >= start.x & end <= end.x) %>%
+      #select(round, task, start = start.x, end = end.x, text)
+    segments_per_round <- segments_per_round %>% relocate(round, task, start, end, text)
+    # Combine text for each round and task
+    combined_text_per_round <- segments_per_round %>%
+      group_by(round, task, start, end) %>%
+      summarise(combined_text = paste(text, collapse = " "), .groups = 'drop')  # Combine text entries into a single string
+    # Now we just want to add in the subject id to the round and task
+    subject_id <- substr(basename(dirname(timings_updated_path)), 1, 7)
+    combined_text_per_round <- combined_text_per_round %>% mutate(subject_id = subject_id)
+    combined_text_per_round
+  })
+#move subject_id before round
+combined_segments_per_round_all <- combined_segments_per_round_all %>% relocate(subject_id, .before = round)
+combined_segments_per_round_all
+
+# Save the result to a new CSV file
+write_csv(combined_segments_per_round_all, file.path(path_to_files, "combined_segments_per_round_all.csv"))
 ```
