@@ -18,6 +18,8 @@ install.packages("rstatix")
 install.packages("dtplyr")
 install.packages("tidyverse")
 install.packages("textclean")
+install.packages("ARTool")
+install.packages("emmeans")
 ```
 
 Initialize commonly used libraries, variables, and functions.
@@ -60,6 +62,8 @@ library(patchwork)
 library(coin)
 library(rcompanion)
 library(rstatix)
+library(ARTool)
+library(emmeans)
 
 na_strings <- c("NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "NaN", "nan", "Inf", "-Inf", "inf", "-inf", "", " ")
 names_with_indices <- function(data) {
@@ -276,6 +280,7 @@ subject_ratings
 # We also need task_condition and gaze_condition
 round_times <- subject_ratings %>%
   group_by(subject_id, round_id) %>%
+  
   summarise(min_unity_log_time = min(unity_log_time, na.rm = TRUE),
             max_unity_log_time = max(unity_log_time, na.rm = TRUE),
             gaze_condition = first(gaze_condition),
@@ -353,8 +358,13 @@ aggregated_ratings <- aggregated_ratings %>%
   group_by(subject_id, renamed_question, gaze_condition) %>%
   summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
   
+aggregated_ratings2 <- processed_ratings %>%
+  group_by(subject_id, renamed_question, task_condition) %>%
+  summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
+
   processed_ratings
   aggregated_ratings
+  aggregated_ratings2
   # Split the data frame by question
   questions_list <- split(aggregated_ratings, aggregated_ratings$renamed_question)
 
@@ -696,6 +706,20 @@ combined_plot <- awareness_plot / confident_plot / ease_plot / focus_plot / pred
   plot_layout(heights = c(1, 1, 1, 1, 1))  # Equal heights for each plot
 combined_plot
 
+summed_ratings
+# Sum ratings for off and on conditions for each renamed question
+summed_ratings_by_condition <- summed_ratings %>%
+  group_by(renamed_question, gaze_condition) %>%
+  summarise(count = sum(count), .groups = "drop")
+summed_ratings_by_condition
+
+#So there seems to be one extra value for each gaze_condition off question. Which subject_id is this? Can we figure out which subject_id has no corresponding gaze_condition 'on'? If we count responses by each subject_id it should show 4 for each gaze condition
+# Count the number of responses for each subject_id and gaze_condition
+responses_by_subject <- processed_ratings %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(count = n(), .groups = "drop")
+
+responses_by_subject
 #What's the total number of responses overall for awareness?
 total_responses <- summed_ratings %>% filter(renamed_question == "Awareness") %>% summarise(total_responses = sum(count))
 total_responses
@@ -847,6 +871,7 @@ ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = ga
 
 
 ```{r}
+# UHH don't run this unless you need to recalculate timings
 # Now we want to compute end_time for timings.csv files that do not have that column
 # Define the path to the root directory containing the subdirectories
 
@@ -2371,7 +2396,26 @@ Key takeaways -
 - People needed to use more directional words to guide the student when they did not see the student's gaze
 - People needed to use more affirmations when they did not see the student's gaze
 - People looked at the student more when they did not see the student's gaze
+- We found decreased usage of descriptive guidance strategies and increased usage of spatial-based and minimal guidance strategies when the student's gaze was visible.
 
+
+Load up the instructional strategies data
+```{r}
+# Load the instructional strategies data
+instructional_strategies_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/instructional_strategies.csv"
+
+instructional_strategies_data <- read_csv(instructional_strategies_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
+# Rename round to round_id and task to task_id
+instructional_strategies_data
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+instructional_strategies_data_dt <- instructional_strategies_data %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+
+
+terrain_dt <- merge(terrain_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+
+
+```
 
 
 Now we want to just do the background questionnaire data
@@ -2545,4 +2589,96 @@ combined_segments_per_round_all
 
 # Save the result to a new CSV file
 write_csv(combined_segments_per_round_all, file.path(path_to_files, "combined_segments_per_round_all.csv"))
+```
+
+We also want to have a file that just is subject_rounds written to a csv file as that includes every subject.
+```{r}
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+subject_rounds_dt
+write_csv(subject_rounds_dt, file.path(path_to_files, "subject_rounds.csv"))
+```
+
+
+
+Now we want to load up instructional_strategies.csv in the root and merge with subject_rounds_dt on round = round_id and task = task_id (the columns in instructional strategies will need to be renamed first)
+
+```{r}
+instructional_strategies_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/instructional_strategies.csv"
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+instructional_strategies_data <- read_csv(instructional_strategies_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
+instructional_strategies_data <- instructional_strategies_data %>% rename(round_id = round, task_id = task)
+instructional_strategies_data_dt <- instructional_strategies_data %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+instructional_strategies_data_dt
+instructional_strategies_data_dt_merged <- merge(instructional_strategies_data_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+instructional_strategies_data_dt_merged
+# Rename instructional strategy values 'dir' to 'Spatial', 'min' to 'Minimal', 'Max' to 'Descriptive'
+instructional_strategies_data_dt_merged <- instructional_strategies_data_dt_merged %>%
+  mutate(across(c("instructional_strategy"), ~str_replace_all(., c("dir" = "Spatial", "min" = "Minimal", "max" = "Descriptive"))))
+instructional_strategies_data_dt_merged
+
+# Find all NA values in gaze condition and instructional strategy
+instructional_strategies_data_dt_merged_na <- instructional_strategies_data_dt_merged %>% filter(is.na(gaze_condition) | is.na(instructional_strategy))
+instructional_strategies_data_dt_merged_na
+# now we want to show a multi bar plot of the count of each instructional strategy within each gaze condition (on or off), so it should show on the x-axis On and Off and each bar should be the count of each instructional strategy, also the x-axis gaze group label on/off should be on the bottom)
+instructional_strategies_data_dt_merged %>%
+  ggplot(aes(x = gaze_condition, fill = instructional_strategy)) +
+  geom_bar(position = "dodge") +
+  labs(title = "", x = "Gaze Condition", y = "# of Trials Where Subjects Used This Strategy") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("Off" = "Gaze Off", "On" = "Gaze On"))
+
+```
+
+
+So this gives us a multi group bar chart of the count of each instructional strategy within each gaze condition, but now we want to group it further by the task type (Locate, Alignment, Task) and the task condition. The task type can be figured out from the task_id, specifically if task_id %% 3 == 1 then it is Locate, if task_id %% 3 == 2 then it is Alignment, and if task_id %% 3 == 0 then it is Match. Furthermore, thet ask_condition is already in the correct format. We will want to facet by task type and task condition.
+```{r}
+# Now we want to group it further by the task type and task condition
+instructional_strategies_data_dt_merged_tt_tc <- instructional_strategies_data_dt_merged %>%
+  mutate(task_id = as.numeric(task_id)) %>%
+  setDT() %>% 
+  .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Alignment"] %>% .[task_id %% 3 == 0, task_type := "Match"] %>% as.data.frame()
+instructional_strategies_data_dt_merged_tt_tc
+
+# We want to filter out the Locate task from the facet for now. We'll just look at it later individually.
+instructional_strategies_data_dt_merged_tt_tc_nl <- instructional_strategies_data_dt_merged_tt_tc %>% filter(task_type != "Locate")
+instructional_strategies_data_dt_merged_tt_tc_nl
+# Now we want to facet by task type and task condition, the task condition should be labelled from "Correct" to "Student was Correct after instruction"
+# and "Incorrect" to "Student made an Error after instruction", also it would be easier to swap the gaze condition and task condition so the top level group is gaze and the second level group is task condition
+# Now we want to group it further by the task type and task condition
+instructional_strategies_data_dt_merged_tt_tc <- instructional_strategies_data_dt_merged %>%
+  mutate(task_id = as.numeric(task_id)) %>%
+  setDT() %>%
+  .[task_id %% 3 == 1, task_type := "Locate"] %>%
+  .[task_id %% 3 == 2, task_type := "Alignment"] %>%
+  .[task_id %% 3 == 0, task_type := "Match"] %>%
+  as.data.frame()
+instructional_strategies_data_dt_merged_tt_tc
+
+# We want to filter out the Locate task from the facet for now. We'll just look at it later individually.
+instructional_strategies_data_dt_merged_tt_tc_nl <- instructional_strategies_data_dt_merged_tt_tc %>% filter(task_type != "Locate")
+instructional_strategies_data_dt_merged_tt_tc_nl
+
+# Now we want to facet by task type and task condition, the task condition should be labelled from "Correct" to "Student was Correct after instruction"
+# and "Incorrect" to "Student made an Error after instruction", also it would be easier to swap the gaze condition and task condition so the top level group is gaze and the second level group is task condition
+instructional_strategies_data_dt_merged_tt_tc_nl %>%
+  mutate(task_condition = recode(task_condition, 
+                                 "Correct" = "Student Correct", 
+                                 "Incorrect" = "Student Error"),
+         gaze_condition = recode(gaze_condition, 
+                                 "On" = "Gaze On", 
+                                 "Off" = "Gaze Off")) %>%
+  ggplot(aes(x = task_condition, fill = instructional_strategy)) +
+  geom_bar(position = "dodge") +
+  labs(title = "", x = "", y = "# of Trials Where Subjects Used This Strategy") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("Student Correct", "Student Error")) +
+  facet_grid(task_type ~ gaze_condition) +
+  theme(
+    strip.text = element_text(size = 10, face = "bold"),
+    axis.text.x = element_text(size = 10, face = "bold", angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 10, face = "bold"),
+    legend.text = element_text(size = 10)
+  )
 ```
