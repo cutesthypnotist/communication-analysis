@@ -176,62 +176,8 @@ options("digits.secs"=6)
 
 
 
-Test to fix missing column headers using function with parameters.
+Creates the round times for each subject, we'll use this a lot.
 
-```{r}
-path_to_files <- "C:\\DataTest\\"
-files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = ".*[A-Z]{3}-\\d{4}-\\d{1,2} \\d{1,2}-\\d{1,2} Rating\\.csv$") %>%
-  map(.f = function(file) {
-    #cols_to_add <- "id"
-    cols_to_add <- "id,rating,bwap,round_id,subject_id,gaze_condition,task_condition"
-    suffix <- "_test.csv"
-    #suffix <- "_fixed.csv"
-    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
-  })
-files_fixed
-path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
-```
-
-Test to fix column headers in annotation files.
-```{r}
-test_file <- "C:\\Users\\Iterated Miku System\\Documents\\communication-analysis"
-files_fixed <- fs::dir_ls(path = test_file, recurse = TRUE, regexp = "annotation_test\\.csv$") %>% 
-  map(.f = function(file) {
-    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
-    suffix <- "_fixed.csv"
-    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
-  })
-files_fixed
-```
-
-Now fix the column headers in the annotation files.
-```{r}
-files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "annotation_test\\.csv$") %>% 
-  map(.f = function(file) {
-    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
-    suffix <- "_fixed.csv"
-    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
-  })
-```
-
-
-Fix the missing column headers in the ratings files.
-```{r}
-files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3}_annotation\\.csv$") %>%
-  map(.f = function(file) {
-    print("Processing file:")
-    print(file)
-    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
-    suffix <- "_fixed.csv"
-    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
-  })
-files_fixed
-```
-
-
-
-
-Find the ones that are still in the older format.
 ```{r}
 subject_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3} rating_fixed\\.csv$") %>%
   map_dfr(.f = function(subjects_file) {
@@ -247,35 +193,6 @@ subject_ratings <- subject_ratings %>% filter(round_id != 9) %>% mutate(subject_
 # Ensure subject_ratings is a data frame
 subject_ratings <- as.data.frame(subject_ratings)
 
-
-test <- subject_ratings %>% filter(question == "How effective was your guidance in improving the student's focus?")
-test
-
-
-# Add a new column 'renamed_question' and fill it based on conditions
-test2 <- subject_ratings %>%
-  mutate(renamed_question = question) %>%  # Initialize with existing questions
-  mutate(renamed_question = ifelse(grepl("Question - How confident were you in correctly guessing", question), "Confident", renamed_question)) %>%
-  mutate(renamed_question = ifelse(grepl("Question - How easy was it to guide", question), "Ease", renamed_question)) %>%
-  mutate(renamed_question = ifelse(grepl("Question - How well were you able to predict", question), "Predict", renamed_question)) %>%
-  mutate(renamed_question = ifelse(grepl("Question - How would you rate your understanding", question), "Focus", renamed_question)) %>%
-  mutate(renamed_question = ifelse(grepl("Question - How would you rate your awareness", question), "Awareness", renamed_question)) %>%
-  mutate(renamed_question = ifelse(grepl("Question - How complex were your instructions when guiding", question), "Complex", renamed_question))
-
-
-test3 <- test2 %>% group_by(subject_id, question) %>% summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
-
-test4 <- test3 %>% filter(question == "Question - How confident did you feel")
-test4
-
-```
-
-
-
-Creates the round times for each subject, we'll use this a lot.
-
-```{r}
-subject_ratings
 # Step 1: Group by subject_id and round_id to get the minimum unity_log_time along with gaze_condition
 # We also need task_condition and gaze_condition
 round_times <- subject_ratings %>%
@@ -384,6 +301,9 @@ aggregated_ratings2 <- processed_ratings %>%
 ```
 
 
+
+
+We process the subject ratings and combine the graphs to create the complete ratings plot.
 ```{r}
 # Reshape data from long to wide format for each question type and gaze condition
 wide_ratings <- aggregated_ratings %>%
@@ -740,10 +660,16 @@ ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
         axis.title.y = element_text(size = 10))
 ```
 
+TODO: The combined plot needs to have the legend labelled from 1 being the lowest to 5 being the highest.
+
 ```{r combined-plot, fig.height=10, fig.width=8}
 combined_plot <- awareness_plot / confident_plot / ease_plot / focus_plot / predict_plot
 combined_plot
 ```
+
+
+Here we will want to calculate the mean duration of each round for each subject and gaze condition. We will then perform a Wilcoxon signed-rank test to compare the mean durations between the 'Off' and 'On' gaze conditions.
+
 
 ```{r}
 

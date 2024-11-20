@@ -1,0 +1,271 @@
+
+Package installation
+```{r}
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("readr")
+install.packages("pwr")
+install.packages("fs")
+install.packages("purrr")
+install.packages("data.table")
+install.packages("janitor")
+install.packages("magrittr")
+install.packages("tidyverse")
+install.packages("stringr")
+install.packages("ggpubr")
+install.packages("ggplot2")
+install.packages("rstatix")
+install.packages("dtplyr")
+install.packages("tidyverse")
+install.packages("textclean")
+install.packages("ARTool")
+install.packages("emmeans")
+```
+
+Initialize commonly used libraries, variables, and functions.
+```{r}
+
+library(tidyr)
+library(fs)
+library(dplyr)
+library(readr)
+library(purrr)
+library(data.table)
+library(pwr)
+library(janitor)
+library(magrittr) 
+library(tidyverse)
+library(stringr)
+library(ggpubr)
+library(ggplot2)
+library(rstatix)
+library(qqplotr)
+library(here)
+library(tidyverse)
+library(qqplotr)
+library(rstatix)
+library(broom)
+library(knitr)
+library(ggpubr)
+library(gtools)
+library(GGally)
+library(correlation)
+library(png)
+library(patchwork)
+library(dtplyr)
+library(tidyverse)
+library(textclean)
+# Function to process each directory
+library(tidyverse)
+library(stringr)
+library(patchwork)
+library(coin)
+library(rcompanion)
+library(rstatix)
+library(ARTool)
+library(emmeans)
+
+na_strings <- c("NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "NaN", "nan", "Inf", "-Inf", "inf", "-inf", "", " ")
+names_with_indices <- function(data) {
+  names_data <- names(data)
+  indices <- seq_along(names_data)
+  names_indexed <- paste(indices, names_data, sep = ": ")
+  return(names_indexed)
+}
+# Function to fix the header and write a new CSV file
+fix_csv_header_id <- function(file_path) {
+  # Read the first line to check headers
+  con <- file(file_path, open = "r")
+  first_line <- readLines(con, n = 1)
+  close(con)
+  
+  # Append ',id' to the first line
+  corrected_first_line <- paste(first_line, "id", sep = ",")
+  
+  # Read the remaining lines of the original file
+  remaining_lines <- read_lines(file_path, skip = 1)
+  
+  # Combine the corrected first line with the remaining lines
+  corrected_content <- c(corrected_first_line, remaining_lines)
+  
+  # Define the new file path
+  new_file_path <- paste0(sub(".csv", "", file_path), "_fixed.csv")
+  
+  # Write the corrected content to the new file
+  writeLines(corrected_content, new_file_path)
+  
+  return(new_file_path)
+}
+
+# Function to fix the header and write a new CSV file with additional columns
+fix_csv_header_cols <- function(file_path, additional_columns, suffix = "_fixed.csv") {
+  # Read the first line to check headers
+  con <- file(file_path, open = "r")
+  first_line <- readLines(con, n = 1)
+  close(con)
+  
+  # Append additional columns to the first line
+  corrected_first_line <- paste(first_line, additional_columns, sep = ",")
+  
+  # Read the remaining lines of the original file
+  remaining_lines <- read_lines(file_path, skip = 1)
+  
+  # Combine the corrected first line with the remaining lines
+  corrected_content <- c(corrected_first_line, remaining_lines)
+  
+  # Define the new file path
+  new_file_path <- paste0(sub(".csv", "", file_path), suffix)
+  
+  # Write the corrected content to the new file
+  writeLines(corrected_content, new_file_path)
+  
+  return(new_file_path)
+}
+
+# Function to compute Z value and print Z, N, and p
+compute_wilcox_summary <- function(wilcox_result) {
+  # Calculate Z value using the normal approximation
+  # Z = (W - mean(W)) / sd(W)
+  # mean(W) = n1 * n2 / 2
+  # sd(W) = sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
+  wilcox_result <- wilcox_result %>%
+    mutate(
+      mean_W = n1 * n2 / 2,
+      sd_W = sqrt(n1 * n2 * (n1 + n2 + 1) / 12),
+      Z = (statistic - mean_W) / sd_W,
+      N = n1 + n2
+    )
+  
+  # Print the results in a more readable format
+  print(sprintf("Z = %.5f, N = %d, p = %.5f", wilcox_result$Z, wilcox_result$N, wilcox_result$p))
+  
+  
+  # Return the modified result with Z value
+  return(wilcox_result)
+}
+
+# Function to compute Z value for Wilcoxon signed-rank test results from rstatix
+compute_wilcoxon_signed_rank_summary <- function(wilcox_result) {
+  # Extract necessary components from the result
+  n <- wilcox_result$n1  # Assuming n1 and n2 are the same because it's a paired test
+  T <- wilcox_result$statistic
+  
+  # Calculate mean and standard error under H0
+  mn = n * (n + 1) / 4
+  se = sqrt(n * (n + 1) * (2 * n + 1) / 24)
+  
+  # Continuity correction
+  correction = 0.5
+  
+  # Calculate Z value
+  Z = (T - mn - correction) / se
+  
+  # Print formatted results
+  print(sprintf("Z = %.4f, N = %d, p = %.5f", Z, n, wilcox_result$p))
+  
+  # Return a list with the computed values
+  return(list(Z = Z, N = n, p = wilcox_result$p))
+}
+
+
+#path_to_files <- "C:\\DataTest\\"
+#path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
+path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\"
+options("digits.secs"=6)
+```
+
+
+
+Test to fix missing column headers using function with parameters.
+
+```{r}
+path_to_files <- "C:\\DataTest\\"
+files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = ".*[A-Z]{3}-\\d{4}-\\d{1,2} \\d{1,2}-\\d{1,2} Rating\\.csv$") %>%
+  map(.f = function(file) {
+    #cols_to_add <- "id"
+    cols_to_add <- "id,rating,bwap,round_id,subject_id,gaze_condition,task_condition"
+    suffix <- "_test.csv"
+    #suffix <- "_fixed.csv"
+    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
+  })
+files_fixed
+path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
+```
+
+Test to fix column headers in annotation files.
+```{r}
+test_file <- "C:\\Users\\Iterated Miku System\\Documents\\communication-analysis"
+files_fixed <- fs::dir_ls(path = test_file, recurse = TRUE, regexp = "annotation_test\\.csv$") %>% 
+  map(.f = function(file) {
+    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
+    suffix <- "_fixed.csv"
+    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
+  })
+files_fixed
+```
+
+Now fix the column headers in the annotation files.
+```{r}
+files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "annotation_test\\.csv$") %>% 
+  map(.f = function(file) {
+    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
+    suffix <- "_fixed.csv"
+    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
+  })
+```
+
+
+Fix the missing column headers in the ratings files.
+```{r}
+files_fixed <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3}_annotation\\.csv$") %>%
+  map(.f = function(file) {
+    print("Processing file:")
+    print(file)
+    cols_to_add <- "name,head_angle,eye_angle,head_angle_using_pos,eye_angle_using_pos,distance"
+    suffix <- "_fixed.csv"
+    new_file <- fix_csv_header_cols(file, cols_to_add, suffix)
+  })
+files_fixed
+```
+
+
+
+
+Find the ones that are still in the older format.
+```{r}
+subject_ratings <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3} rating_fixed\\.csv$") %>%
+  map_dfr(.f = function(subjects_file) {
+    print(subjects_file)
+    subject_row <- read_csv(subjects_file, na = na_strings, show_col_types = FALSE) %>% clean_names()
+    subject_row
+  }) 
+path_to_files
+subject_ratings
+
+subject_ratings <- subject_ratings %>% filter(round_id != 9) %>% mutate(subject_id = substr(subject_id, 1, 7))
+
+# Ensure subject_ratings is a data frame
+subject_ratings <- as.data.frame(subject_ratings)
+
+
+test <- subject_ratings %>% filter(question == "How effective was your guidance in improving the student's focus?")
+test
+
+
+# Add a new column 'renamed_question' and fill it based on conditions
+test2 <- subject_ratings %>%
+  mutate(renamed_question = question) %>%  # Initialize with existing questions
+  mutate(renamed_question = ifelse(grepl("Question - How confident were you in correctly guessing", question), "Confident", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How easy was it to guide", question), "Ease", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How well were you able to predict", question), "Predict", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How would you rate your understanding", question), "Focus", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How would you rate your awareness", question), "Awareness", renamed_question)) %>%
+  mutate(renamed_question = ifelse(grepl("Question - How complex were your instructions when guiding", question), "Complex", renamed_question))
+
+
+test3 <- test2 %>% group_by(subject_id, question) %>% summarise(mean_rating = mean(rating, na.rm = TRUE), .groups = "drop")
+
+test4 <- test3 %>% filter(question == "Question - How confident did you feel")
+test4
+
+```
