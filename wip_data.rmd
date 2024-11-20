@@ -28,7 +28,7 @@ required_packages <- c(
   "tidyr", "fs", "dplyr", "readr", "purrr", "data.table", "pwr", "janitor", 
   "magrittr", "tidyverse", "stringr", "ggpubr", "ggplot2", "rstatix", "qqplotr", 
   "here", "broom", "knitr", "gtools", "GGally", "correlation", "png", "patchwork", 
-  "dtplyr", "textclean", "coin", "rcompanion", "ARTool", "emmeans", "multcomp"
+  "dtplyr", "textclean", "coin", "rcompanion", "ARTool", "emmeans"
 )
 
 # Install missing packages
@@ -788,6 +788,18 @@ ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = ga
   geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
 ```
 
+```{r}
+# Plotting the results
+ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = gaze_condition)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0, 350), breaks = seq(0, 350, 50)) +
+  labs(title = "Comparison of Mean Round (3 Tasks) Durations by Gaze Condition", x = "Gaze Condition", y = "Mean Duration") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
+  geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+
+```
+
 Paper-friendly version of the plot that can be customized.
 ```{r duration-plot, fig.height=3, fig.width=3}
 # Plotting the results. We don't want the p-value label. We don't want to have the x-axis labeled as Gaze Condition. The x-axis labels should instead be "Gaze Off" and "Gaze On". We do not want the legend. We do not want the title. Finally, we want to have error bars show up as well.
@@ -818,8 +830,7 @@ ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = ga
 
 
 
-
-
+Don't run this unless you need to recalculate timings.
 ```{r}
 # UHH don't run this unless you need to recalculate timings
 # Now we want to compute end_time for timings.csv files that do not have that column
@@ -893,10 +904,11 @@ process_directory <- function(directory_path) {
 # List all directories under the root path and process each one
 directories <- fs::dir_ls(path_to_files, recurse = TRUE, type = "directory")
 walk(directories, process_directory)
-
 ```
 
 
+
+This can be skipped as well.
 ```{r}
 directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\QWE-042"
 timings_path <- file.path(directory_path, "timings_updated.csv")
@@ -974,8 +986,6 @@ print(timings_path)
 
 
 ```
-
-
 
 ```{r}
 
@@ -1072,10 +1082,9 @@ results <- map(directories, process_directory)
 
 ```
 
-TODO: Plot the word counts for each condition and round.
 
+Plot the word counts for each condition and round.
 Start off by figuring out % of time they spent looking at the terrain in each condition/task.
-
 First we do a test with one file
 
 ```{r}
@@ -2349,6 +2358,9 @@ Key takeaways -
 - We found decreased usage of descriptive guidance strategies and increased usage of spatial-based and minimal guidance strategies when the student's gaze was visible.
 
 
+
+
+The data below is WIP
 Load up the instructional strategies data
 ```{r}
 # Load the instructional strategies data
