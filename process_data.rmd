@@ -513,6 +513,13 @@ combined_segments_per_round_all_dt_merged <- combined_segments_per_round_all_dt_
 # Now save it to a new csv
 write_csv(combined_segments_per_round_all_dt_merged, file.path(path_to_files, "combined_segments_per_round_all_dt_merged.csv"))
 
+# Check the counts
+test_for_fun <- combined_segments_per_round_all_dt_merged %>%
+  group_by(gaze_condition) %>%
+  summarise(count = n(), .groups = "drop")
+
+test_for_fun
+
 
 # Get the mean task_duration by each instructional strategy
 task_durations <- combined_segments_per_round_all_dt_merged %>%
@@ -855,7 +862,7 @@ ggplot(task_durations_cond2,
   )
 ggplot(task_durations_type2,
        aes(
-         x    = task_type,
+         x    = gaze_condition,
          y    = mean_task_duration,
          fill = instructional_strategy
        )) +
@@ -864,13 +871,13 @@ ggplot(task_durations_type2,
     width    = 0.6
   ) +
   facet_wrap(
-    ~ gaze_condition,
+    ~ task_type,
     scales = "free_x",            # allow differing x‐axis labels length
     ncol   = 2
   ) +
   labs(
     title = "Median Task Duration by Instructional Strategy\nand Task Type, by Gaze Condition",
-    x     = "Task Type",
+    x     = "Gaze Condition",
     y     = "Median Duration (s)"
   ) +
   scale_fill_manual(
@@ -891,6 +898,14 @@ ggplot(task_durations_type2,
 
 
 task_durations_type2
+
+#Check the counts of each instructional strategy within each gaze condition
+
+task_durations_type2_count <- task_durations_type2 %>%
+  group_by(subject_id) %>%
+  summarise(count = n(), .groups = "drop")
+
+task_durations_type2_count
 
 ```
 
@@ -923,16 +938,23 @@ print(outliers)
 
 ```{r}
 
+# Get the mean task_duration by each instructional strategy
+task_durations_clean <- combined_segments_per_round_all_dt_merged %>%
+  group_by(subject_id, instructional_strategy, task_condition, gaze_condition) %>%
+  summarise(mean_task_duration = median(task_duration, na.rm = TRUE), .groups = "drop") %>%
+  complete(subject_id, instructional_strategy, gaze_condition, 
+           fill = list(mean_task_duration = NA))
+
 #First check that the count of trials across condition is evenly split.
 # First start with gaze condition
 # Check the count of trials across gaze condition
-task_durations_gaze_count <- task_durations %>%
+task_durations_gaze_count <- task_durations_clean %>%
   group_by(gaze_condition) %>%
   summarise(count = n(), .groups = "drop")
 task_durations_gaze_count
 # It's not split evenly, so figure out counts of gaze condition broken down by subject
 
-task_durations_gaze_count_subject <- task_durations %>%
+task_durations_gaze_count_subject <- task_durations_clean %>%
   group_by(subject_id, gaze_condition) %>%
   summarise(count = n(), .groups = "drop")
 task_durations_gaze_count_subject
@@ -946,6 +968,11 @@ library(tidyr)
 library(patchwork)
 
 task_durations_clean <- task_durations_cond2
+
+
+
+
+
 
 # First, create aggregated data for pie charts
 # We'll sum total durations to show proportional time spent in each condition
@@ -1223,6 +1250,7 @@ library(patchwork)
 library(sunburstR)
 # Install ggsunburst if needed: devtools::install_github("didacs/ggsunburst")
 library(ggsunburst)
+library(reticulate)
 
 # Define consistent color palette for instructional strategies
 strategy_palette <- c(
@@ -1556,7 +1584,582 @@ treemap_plot <- ggplot(nested_data, aes(
 print(treemap_plot)
 ```
 
+```{r my_balanced_sunburst, fig.width=12, fig.height=8, dpi=300}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+library(plotly)
 
+# Define consistent color palette for instructional strategies
+strategy_palette <- c(
+  "Descriptive" = "#FFD180",
+  "Spatial" = "#81D4FA", 
+  "Minimal" = "#FF7043"
+)
+
+# ============================================================================
+# 1. CREATE COMPLETE BALANCED DATA WITH COUNTS
+# ============================================================================
+
+# Get all possible combinations and ensure balanced representation
+all_subjects <- combined_segments_per_round_all_dt_merged %>%
+  distinct(subject_id) %>%
+  pull(subject_id)
+
+all_gaze <- c("Off", "On")
+all_strategies <- c("Descriptive", "Spatial", "Minimal")
+all_correctness <- c("Correct", "Incorrect")
+
+# Create complete grid of all possible combinations
+complete_combinations <- expand_grid(
+  subject_id = all_subjects,
+  gaze_condition = all_gaze,
+  instructional_strategy = all_strategies,
+  task_condition = all_correctness
+)
+
+# Get actual counts from the data
+actual_counts <- combined_segments_per_round_all_dt_merged %>%
+  filter(!is.na(instructional_strategy) & !is.na(task_condition)) %>%
+  group_by(subject_id, gaze_condition, instructional_strategy, task_condition) %>%
+  summarise(count = n(), .groups = "drop")
+
+# Join to get complete data with 0s for missing combinations
+balanced_data <- complete_combinations %>%
+  left_join(actual_counts, by = c("subject_id", "gaze_condition", "instructional_strategy", "task_condition")) %>%
+  mutate(count = ifelse(is.na(count), 0, count))
+
+# Aggregate to get total counts for each combination
+sunburst_counts <- balanced_data %>%
+  group_by(gaze_condition, instructional_strategy, task_condition) %>%
+  summarise(total_count = sum(count), .groups = "drop")
+
+print("Sunburst counts summary:")
+print(sunburst_counts)
+
+# Check balance
+balance_check <- sunburst_counts %>%
+  group_by(gaze_condition) %>%
+  summarise(total = sum(total_count), .groups = "drop")
+print("Balance check by gaze condition:")
+print(balance_check)
+
+correctness_check <- sunburst_counts %>%
+  group_by(task_condition) %>%
+  summarise(total = sum(total_count), .groups = "drop")
+print("Balance check by correctness:")
+print(correctness_check)
+
+# ============================================================================
+# 2. CREATE INDIVIDUAL PIE CHARTS WITH COUNTS
+# ============================================================================
+
+# Create pie data with proper percentages
+pie_data_balanced <- sunburst_counts %>%
+  group_by(gaze_condition, task_condition) %>%
+  mutate(
+    pct = total_count / sum(total_count),
+    label = paste0(instructional_strategy, "\n", 
+                   "(n=", total_count, ")\n",
+                   round(pct * 100, 1), "%")
+  )
+
+# Create 4 pie charts (2x2 grid)
+p_off_incorrect <- ggplot(
+  pie_data_balanced %>% filter(gaze_condition == "Off", task_condition == "Incorrect"),
+  aes(x = "", y = total_count, fill = instructional_strategy)
+) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze Off - Incorrect") +
+  scale_fill_manual(values = strategy_palette) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+p_off_correct <- ggplot(
+  pie_data_balanced %>% filter(gaze_condition == "Off", task_condition == "Correct"),
+  aes(x = "", y = total_count, fill = instructional_strategy)
+) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze Off - Correct") +
+  scale_fill_manual(values = strategy_palette) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+p_on_incorrect <- ggplot(
+  pie_data_balanced %>% filter(gaze_condition == "On", task_condition == "Incorrect"),
+  aes(x = "", y = total_count, fill = instructional_strategy)
+) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze On - Incorrect") +
+  scale_fill_manual(values = strategy_palette) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+p_on_correct <- ggplot(
+  pie_data_balanced %>% filter(gaze_condition == "On", task_condition == "Correct"),
+  aes(x = "", y = total_count, fill = instructional_strategy)
+) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze On - Correct") +
+  scale_fill_manual(values = strategy_palette) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    legend.position = "bottom"
+  )
+
+# Combine all 4 pie charts
+individual_pies <- (p_off_incorrect | p_off_correct) / (p_on_incorrect | p_on_correct) +
+  plot_annotation(
+    title = "Instructional Strategy Distribution by Gaze and Correctness",
+    subtitle = "Showing counts (n) and percentages for each strategy",
+    theme = theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  )
+
+print(individual_pies)
+
+
+```
+
+```{r my_balanced_sunburst, fig.width=12, fig.height=8, dpi=300}
+
+# ============================================================================
+# 3. PLOTLY SUNBURST WITH BALANCED HIERARCHY
+# ============================================================================
+
+# Build hierarchical structure for plotly sunburst
+plotly_data <- data.frame(
+  labels = character(),
+  parents = character(), 
+  values = numeric(),
+  ids = character(),
+  stringsAsFactors = FALSE
+)
+
+# Total count
+total_count <- sum(sunburst_counts$total_count)
+
+# Add root (50/50 split enforced)
+plotly_data <- rbind(plotly_data, data.frame(
+  labels = "Total",
+  parents = "",
+  values = total_count,
+  ids = "Total"
+))
+
+# Add Gaze level (forced 50/50)
+gaze_value <- total_count / 2  # Force equal split
+for(gaze in all_gaze) {
+  plotly_data <- rbind(plotly_data, data.frame(
+    labels = paste("Gaze", gaze),
+    parents = "Total",
+    values = gaze_value,
+    ids = paste("Gaze", gaze)
+  ))
+}
+
+# Add Correctness level (forced 50/50 within each gaze)
+correctness_value <- gaze_value / 2  # Force equal split within gaze
+for(gaze in all_gaze) {
+  for(correct in all_correctness) {
+    plotly_data <- rbind(plotly_data, data.frame(
+      labels = correct,
+      parents = paste("Gaze", gaze),
+      values = correctness_value,
+      ids = paste("Gaze", gaze, correct, sep = "-")
+    ))
+  }
+}
+
+# Add Strategy level (use actual proportions within each correctness group)
+for(i in 1:nrow(sunburst_counts)) {
+  # Calculate what proportion this should be of the correctness_value
+  group_total <- sunburst_counts %>%
+    filter(gaze_condition == sunburst_counts$gaze_condition[i],
+           task_condition == sunburst_counts$task_condition[i]) %>%
+    summarise(total = sum(total_count)) %>%
+    pull(total)
+  
+  # Proportion within this correctness group
+  proportion <- sunburst_counts$total_count[i] / group_total
+  strategy_value <- correctness_value * proportion
+  
+  plotly_data <- rbind(plotly_data, data.frame(
+    labels = paste0(sunburst_counts$instructional_strategy[i], " (n=", sunburst_counts$total_count[i], ")"),
+    parents = paste("Gaze", sunburst_counts$gaze_condition[i], 
+                   sunburst_counts$task_condition[i], sep = "-"),
+    values = strategy_value,
+    ids = paste("Gaze", sunburst_counts$gaze_condition[i],
+               sunburst_counts$task_condition[i],
+               sunburst_counts$instructional_strategy[i], sep = "-")
+  ))
+}
+
+# Create color vector
+colors <- c(
+  "#FFFFFF",  # Total (white)
+  "#FFA726", "#42A5F5",  # Gaze Off, On
+  "#FF8A65", "#FFB74D", "#5C6BC0", "#29B6F6",  # Correctness combinations
+  # Strategy combinations (using strategy palette)
+  strategy_palette["Descriptive"], strategy_palette["Spatial"], strategy_palette["Minimal"],  # Off-Incorrect
+  strategy_palette["Descriptive"], strategy_palette["Spatial"], strategy_palette["Minimal"],  # Off-Correct  
+  strategy_palette["Descriptive"], strategy_palette["Spatial"], strategy_palette["Minimal"],  # On-Incorrect
+  strategy_palette["Descriptive"], strategy_palette["Spatial"], strategy_palette["Minimal"]   # On-Correct
+)
+
+# Create the balanced plotly sunburst
+p_sunburst_balanced <- plot_ly(
+  data = plotly_data,
+  ids = ~ids,
+  labels = ~labels,
+  parents = ~parents,
+  values = ~values,
+  type = 'sunburst',
+  branchvalues = "total",
+  marker = list(colors = colors[1:nrow(plotly_data)]),
+  textinfo = "label+percent parent",
+  width = 1000,
+  height = 1000
+) %>%
+  layout(
+    title = list(
+      text = "Balanced Task Count Hierarchy: Gaze (50/50) → Correctness (50/50) → Strategy (Actual Proportions)",
+      font = list(size = 16)
+    ),
+    margin = list(l = 50, r = 50, t = 100, b = 50),
+    font = list(size = 16),
+    width = 1000,
+    height = 1000
+  )
+
+print(p_sunburst_balanced)
+
+# ============================================================================
+# 4. SUMMARY STATISTICS
+# ============================================================================
+
+# Print summary of actual vs balanced data
+cat("\n=== SUMMARY STATISTICS ===\n")
+cat("Total observations:", total_count, "\n")
+
+strategy_summary <- sunburst_counts %>%
+  group_by(instructional_strategy) %>%
+  summarise(total = sum(total_count), pct = round(total/total_count*100, 1), .groups = "drop")
+
+cat("\nStrategy distribution overall:\n")
+print(strategy_summary)
+
+gaze_strategy_summary <- sunburst_counts %>%
+  group_by(gaze_condition, instructional_strategy) %>%
+  summarise(total = sum(total_count), .groups = "drop") %>%
+  group_by(gaze_condition) %>%
+  mutate(pct = round(total/sum(total)*100, 1))
+
+cat("\nStrategy distribution by gaze condition:\n")
+print(gaze_strategy_summary)
+```
+
+
+```{r my_big_plot, fig.width=12, fig.height=6, dpi=300}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+# Install ggsunburst if needed: devtools::install_github("didacs/ggsunburst")
+library(ggsunburst)
+
+# Define consistent color palette for instructional strategies
+strategy_palette <- c(
+  "Descriptive" = "#FFD180",
+  "Spatial" = "#81D4FA",
+  "Minimal" = "#FF7043"
+)
+
+# ============================================================================
+# 1. PREPARE DATA AND CONVERT TO NEWICK FORMAT
+# ============================================================================
+
+# Aggregate the data
+sunburst_data_agg <- task_durations_clean %>%
+  group_by(gaze_condition, task_condition, instructional_strategy) %>%
+  summarise(
+    duration = sum(mean_task_duration, na.rm = TRUE),
+    count = n(),
+    .groups = "drop"
+  ) %>%
+  # Create readable labels with counts
+  mutate(
+    gaze_label = paste0("Gaze_", gaze_condition),
+    task_label = paste0(task_condition, "_n", count),
+    strategy_label = paste0(instructional_strategy, "_", round(duration, 1))
+  )
+
+# Function to convert hierarchical data to newick format
+create_newick_from_data <- function(data) {
+  # Group by gaze and task conditions to build the tree structure
+  gaze_groups <- split(data, data$gaze_condition)
+  
+  gaze_trees <- map(gaze_groups, function(gaze_data) {
+    task_groups <- split(gaze_data, gaze_data$task_condition)
+    
+    task_trees <- map(task_groups, function(task_data) {
+      # Create leaf nodes for strategies
+      strategies <- paste0(task_data$strategy_label, ":", task_data$duration)
+      paste0("(", paste(strategies, collapse = ","), ")", task_data$task_label[1])
+    })
+    
+    paste0("(", paste(task_trees, collapse = ","), ")", gaze_data$gaze_label[1])
+  })
+  
+  # Combine into full tree
+  newick <- paste0("(", paste(gaze_trees, collapse = ","), ");")
+  return(newick)
+}
+
+# Create newick string
+newick_string <- create_newick_from_data(sunburst_data_agg)
+cat("Newick format tree:\n", newick_string, "\n\n")
+
+# ============================================================================
+# 2. EXTRACT SUNBURST DATA AND CREATE PLOT
+# ============================================================================
+
+
+# Extract sunburst coordinates using ggsunburst
+sb_data <- sunburst_data(newick_string)
+
+# Create the main sunburst plot
+p_sunburst_main <- ggplot(sb_data$rects) +
+  geom_rect(
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = name),
+    color = "white", 
+    size = 0.5
+  ) +
+  coord_polar() +
+  scale_fill_manual(
+    values = c(
+      # Set colors based on the hierarchy level and content
+      # You may need to adjust these based on the actual names in sb_data$rects
+      "Gaze_Off" = "#FFA726",
+      "Gaze_On" = "#42A5F5",
+      "Correct" = "#4CAF50",
+      "Incorrect" = "#FF5722",
+      "Descriptive" = "#FFD180",
+      "Spatial" = "#81D4FA", 
+      "Minimal" = "#FF7043"
+    ),
+    na.value = "grey80"
+  ) +
+  labs(
+    title = "Task Duration Hierarchy: Gaze → Correctness → Strategy",
+    subtitle = "Sunburst diagram showing nested relationships",
+    fill = "Category"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.position = "right"
+  )
+
+print(p_sunburst_main)
+
+# ============================================================================
+# 3. ALTERNATIVE: MANUAL NEWICK FOR CLEANER LABELS
+# ============================================================================
+
+# Create a simpler newick structure with cleaner names
+create_simple_newick <- function(data) {
+  # Simplify the data for cleaner visualization
+  simple_data <- data %>%
+    mutate(
+      # Use duration as the "branch length" in newick format
+      duration_scaled = round(duration / max(duration) * 10, 1)
+    )
+  
+  # Build newick manually for better control
+  gaze_off <- simple_data %>% filter(gaze_condition == "Off")
+  gaze_on <- simple_data %>% filter(gaze_condition == "On")
+  
+  # Function to create subtree for each gaze condition
+  create_gaze_subtree <- function(gaze_data, gaze_name) {
+    correct <- gaze_data %>% filter(task_condition == "Correct")
+    incorrect <- gaze_data %>% filter(task_condition == "Incorrect")
+    
+    # Create strategy leaves for each task condition
+    create_strategy_leaves <- function(task_data) {
+      if(nrow(task_data) == 0) return("EmptyTask:1")
+      leaves <- paste0(task_data$instructional_strategy, ":", task_data$duration_scaled)
+      paste0("(", paste(leaves, collapse = ","), ")")
+    }
+    
+    correct_subtree <- create_strategy_leaves(correct)
+    incorrect_subtree <- create_strategy_leaves(incorrect)
+    
+    paste0("(", correct_subtree, "Correct,", incorrect_subtree, "Incorrect)", gaze_name)
+  }
+  
+  off_tree <- create_gaze_subtree(gaze_off, "Off")
+  on_tree <- create_gaze_subtree(gaze_on, "On")
+  
+  newick <- paste0("(", off_tree, ",", on_tree, ");")
+  return(newick)
+}
+
+# Create simplified newick
+simple_newick <- create_simple_newick(sunburst_data_agg)
+cat("Simplified newick:\n", simple_newick, "\n\n")
+
+# Extract data and create plot
+sb_simple <- sunburst_data(simple_newick)
+
+p_sunburst_simple <- ggplot(sb_simple$rects) +
+  geom_rect(
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = name),
+    color = "white", 
+    size = 0.5
+  ) +
+  coord_polar() +
+  scale_fill_manual(
+    values = c(
+      # Gaze conditions
+      "Off" = "#FFA726", "On" = "#42A5F5",
+      # Task conditions  
+      "Correct" = "#4CAF50", "Incorrect" = "#FF5722",
+      # Strategies
+      "Descriptive" = "#FFD180", "Spatial" = "#81D4FA", "Minimal" = "#FF7043"
+    ),
+    na.value = "grey70"
+  ) +
+  labs(
+    title = "Simplified Sunburst: Gaze → Task → Strategy",
+    subtitle = "Cleaner hierarchical visualization",
+    fill = "Level"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.position = "bottom"
+  )
+
+print(p_sunburst_simple)
+
+# ============================================================================
+# 4. ICICLE PLOT (RECTANGULAR VERSION)
+# ============================================================================
+
+# Create icicle plot (rectangular sunburst)
+p_icicle <- ggplot(sb_simple$rects) +
+  geom_rect(
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = name),
+    color = "white", 
+    size = 0.5
+  ) +
+  scale_y_reverse() +  # Important for proper icicle orientation
+  scale_fill_manual(
+    values = c(
+      "Off" = "#FFA726", "On" = "#42A5F5",
+      "Correct" = "#4CAF50", "Incorrect" = "#FF5722",
+      "Descriptive" = "#FFD180", "Spatial" = "#81D4FA", "Minimal" = "#FF7043"
+    ),
+    na.value = "grey70"
+  ) +
+  labs(
+    title = "Icicle Plot: Hierarchical Task Duration",
+    subtitle = "Rectangular version of the sunburst",
+    fill = "Level",
+    x = "Proportion", y = "Hierarchy Level"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.position = "right",
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+print(p_icicle)
+
+# ============================================================================
+# 5. INSPECT THE DATA STRUCTURE
+# ============================================================================
+
+# Print the structure of extracted data for debugging
+cat("Structure of extracted sunburst data:\n")
+str(sb_simple)
+
+cat("\nRectangle data preview:\n")
+print(head(sb_simple$rects))
+
+cat("\nUnique names in the data:\n")
+print(unique(sb_simple$rects$name))
+
+# ============================================================================
+# 6. SUMMARY INFORMATION
+# ============================================================================
+
+# Create summary table
+summary_stats <- sunburst_data_agg %>%
+  group_by(gaze_condition) %>%
+  mutate(
+    gaze_total = sum(duration),
+    gaze_pct = round((duration/gaze_total)*100, 1)
+  ) %>%
+  ungroup() %>%
+  arrange(gaze_condition, task_condition, desc(duration)) %>%
+  select(
+    `Gaze` = gaze_condition,
+    `Task` = task_condition,
+    `Strategy` = instructional_strategy,
+    `Duration` = duration,
+    `Count` = count,
+    `% of Gaze` = gaze_pct
+  )
+
+cat("\nSummary Statistics:\n")
+print(summary_stats)
+
+# ============================================================================
+# 7. COMBINED VISUALIZATION
+# ============================================================================
+
+# Combine sunburst and icicle for comparison
+combined_viz <- p_sunburst_simple | p_icicle
+combined_viz <- combined_viz + 
+  plot_annotation(
+    title = "Hierarchical Task Duration Analysis",
+    subtitle = "Sunburst (left) and Icicle (right) representations",
+    theme = theme(
+      plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(size = 14, hjust = 0.5)
+    )
+  )
+
+print(combined_viz)
+```
 
 Detect outliers per task_condition + gaze_condition + instructional_strategy
 ```{r}
@@ -1825,9 +2428,9 @@ print(p_swapped)
 # ── Option B: SWAP and show Incorrect/Correct side-by-side inside each Off/On group
 # (fill = task_condition), facet by instructional strategy
 p_swapped_alt <- ggplot(task_durations_clean,
-                        aes(x = gaze_condition,
+                        aes(x = task_condition,
                             y = mean_task_duration,
-                            fill = task_condition)) +
+                            fill = gaze_condition)) +
   geom_boxplot(position = position_dodge(width = 0.75), width = 0.6) +
   facet_wrap(~ instructional_strategy, nrow = 1) +
   labs(
@@ -1836,7 +2439,7 @@ p_swapped_alt <- ggplot(task_durations_clean,
     y = "Median Duration (s)",
     fill = "Correctness"
   ) +
-  scale_fill_manual(values = c("Incorrect" = "#F8766D", "Correct" = "#00BFC4")) +
+  scale_fill_manual(values = c("Off" = "#F8766D", "On" = "#00BFC4")) +
   theme_minimal(base_size = 14) +
   theme(
     strip.text      = element_text(size = 12, face = "bold"),
