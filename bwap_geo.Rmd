@@ -1,0 +1,368 @@
+
+Package installation
+```{r}
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("readr")
+install.packages("pwr")
+install.packages("fs")
+install.packages("purrr")
+install.packages("data.table")
+install.packages("janitor")
+install.packages("magrittr")
+install.packages("tidyverse")
+install.packages("stringr")
+install.packages("ggpubr")
+install.packages("ggplot2")
+install.packages("rstatix")
+install.packages("dtplyr")
+install.packages("tidyverse")
+install.packages("textclean")
+install.packages("ARTool")
+install.packages("emmeans")
+```
+
+
+
+```{r}
+# List of required packages
+required_packages <- c(
+  "tidyr", "fs", "dplyr", "readr", "purrr", "data.table", "pwr", "janitor", 
+  "magrittr", "tidyverse", "stringr", "ggpubr", "ggplot2", "rstatix", "qqplotr", 
+  "here", "broom", "knitr", "gtools", "GGally", "correlation", "png", "patchwork", 
+  "dtplyr", "textclean", "coin", "rcompanion", "ARTool", "emmeans", "multcomp"
+)
+
+# Install missing packages
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+
+# Apply function to all required packages
+lapply(required_packages, install_if_missing)
+
+# Load all packages
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+```
+
+Initialize commonly used libraries, variables, and functions.
+```{r}
+
+library(tidyr)
+library(fs)
+library(dplyr)
+library(readr)
+library(purrr)
+library(data.table)
+library(pwr)
+library(janitor)
+library(magrittr) 
+library(tidyverse)
+library(stringr)
+library(ggpubr)
+library(ggplot2)
+library(rstatix)
+library(qqplotr)
+library(here)
+library(tidyverse)
+library(qqplotr)
+library(rstatix)
+library(broom)
+library(knitr)
+library(ggpubr)
+library(gtools)
+library(GGally)
+library(correlation)
+library(png)
+library(patchwork)
+library(dtplyr)
+library(tidyverse)
+library(textclean)
+# Function to process each directory
+library(tidyverse)
+library(stringr)
+library(patchwork)
+library(coin)
+library(rcompanion)
+library(rstatix)
+library(ARTool)
+library(emmeans)
+
+na_strings <- c("NA", "N/A", "na", "n/a", "NULL", "null", "None", "none", "NaN", "nan", "Inf", "-Inf", "inf", "-inf", "", " ")
+names_with_indices <- function(data) {
+  names_data <- names(data)
+  indices <- seq_along(names_data)
+  names_indexed <- paste(indices, names_data, sep = ": ")
+  return(names_indexed)
+}
+# Function to fix the header and write a new CSV file
+fix_csv_header_id <- function(file_path) {
+  # Read the first line to check headers
+  con <- file(file_path, open = "r")
+  first_line <- readLines(con, n = 1)
+  close(con)
+  
+  # Append ',id' to the first line
+  corrected_first_line <- paste(first_line, "id", sep = ",")
+  
+  # Read the remaining lines of the original file
+  remaining_lines <- read_lines(file_path, skip = 1)
+  
+  # Combine the corrected first line with the remaining lines
+  corrected_content <- c(corrected_first_line, remaining_lines)
+  
+  # Define the new file path
+  new_file_path <- paste0(sub(".csv", "", file_path), "_fixed.csv")
+  
+  # Write the corrected content to the new file
+  writeLines(corrected_content, new_file_path)
+  
+  return(new_file_path)
+}
+
+# Function to fix the header and write a new CSV file with additional columns
+fix_csv_header_cols <- function(file_path, additional_columns, suffix = "_fixed.csv") {
+  # Read the first line to check headers
+  con <- file(file_path, open = "r")
+  first_line <- readLines(con, n = 1)
+  close(con)
+  
+  # Append additional columns to the first line
+  corrected_first_line <- paste(first_line, additional_columns, sep = ",")
+  
+  # Read the remaining lines of the original file
+  remaining_lines <- read_lines(file_path, skip = 1)
+  
+  # Combine the corrected first line with the remaining lines
+  corrected_content <- c(corrected_first_line, remaining_lines)
+  
+  # Define the new file path
+  new_file_path <- paste0(sub(".csv", "", file_path), suffix)
+  
+  # Write the corrected content to the new file
+  writeLines(corrected_content, new_file_path)
+  
+  return(new_file_path)
+}
+
+# Function to compute Z value and print Z, N, and p
+compute_wilcox_summary <- function(wilcox_result) {
+  # Calculate Z value using the normal approximation
+  # Z = (W - mean(W)) / sd(W)
+  # mean(W) = n1 * n2 / 2
+  # sd(W) = sqrt(n1 * n2 * (n1 + n2 + 1) / 12)
+  wilcox_result <- wilcox_result %>%
+    mutate(
+      mean_W = n1 * n2 / 2,
+      sd_W = sqrt(n1 * n2 * (n1 + n2 + 1) / 12),
+      Z = (statistic - mean_W) / sd_W,
+      N = n1 + n2
+    )
+  
+  # Print the results in a more readable format
+  print(sprintf("Z = %.5f, N = %d, p = %.5f", wilcox_result$Z, wilcox_result$N, wilcox_result$p))
+  
+  
+  # Return the modified result with Z value
+  return(wilcox_result)
+}
+
+# Function to compute Z value for Wilcoxon signed-rank test results from rstatix
+compute_wilcoxon_signed_rank_summary <- function(wilcox_result) {
+  # Extract necessary components from the result
+  n <- wilcox_result$n1  # Assuming n1 and n2 are the same because it's a paired test
+  T <- wilcox_result$statistic
+  
+  # Calculate mean and standard error under H0
+  mn = n * (n + 1) / 4
+  se = sqrt(n * (n + 1) * (2 * n + 1) / 24)
+  
+  # Continuity correction
+  correction = 0.5
+  
+  # Calculate Z value
+  Z = (T - mn - correction) / se
+  
+  # Print formatted results
+  print(sprintf("Z = %.4f, N = %d, p = %.5f", Z, n, wilcox_result$p))
+  
+  # Return a list with the computed values
+  return(list(Z = Z, N = n, p = wilcox_result$p))
+}
+
+
+#path_to_files <- "C:\\DataTest\\"
+#path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\expLogs\\"
+path_to_files <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\"
+options("digits.secs"=6)
+```
+
+
+
+
+```{r}
+
+ # Test something really quick
+
+## --- 0. libraries -------------
+library(data.table)    # fast ingest
+library(alphashape3d)   # alpha-shape
+library(rgl)            # OpenGL viewer
+# optional: library(Rvcg)  # Ball‑Pivoting alternative
+
+## --- 1. read & QC -------------
+xyz <- fread("Bodcaw_horizon_X_Y_TWT.dat", header = FALSE,
+             col.names = c("X","Y","TWT"))
+bad   <- !is.finite(as.matrix(xyz))
+if (any(bad)) xyz <- xyz[!bad]            # drop non‑finite rows
+
+## --- 2. centre & rescale -------
+ctr       <- colMeans(xyz[,.(X,Y,TWT)])
+xyz_c     <- sweep(as.matrix(xyz), 2, ctr)     # subtract centroids
+scale_fac <- max(abs(xyz_c))                  # one‑half box size
+xyz_n     <- xyz_c / scale_fac                # now ∈[‑1,1]
+
+## --- 3. pick α heuristic -------
+## α ≈ 2–3× median edge length of k‑NN graph
+library(FNN)
+med_edge <- median(knn.dist(xyz_n, k = 6))
+alpha    <- 3 * med_edge                     # tune 2–5× if needed
+
+## --- 4. build alpha‑shape -------
+ash <- ashape3d(xyz_n, alpha = alpha)
+
+## --- 5. visualise --------------
+open3d(windowRect = c(50,50,1200,900))
+shade3d(ash$triang, col = "tan"); axes3d()
+title3d(main = sprintf("Bodcaw horizon  —  α = %.4f", alpha),
+        xlab = "X", ylab = "Y", zlab = "TWT (scaled)")
+
+```
+
+```{r}
+library(data.table);   library(geometry);   library(rgl)
+
+## 1. Load
+xyz <- fread("Bodcaw_horizon_X_Y_TWT.dat", header = FALSE,
+             col.names = c("X","Y","TWT"))
+
+## 2. Optional: thin duplicates (exact XY repeats)
+xyz <- unique(xyz, by = c("X", "Y", "TWT"))
+# Calculate depth from TWT by doing (TWT/2)*2000
+xyz$TWT <- (xyz$TWT/2) * 200000
+
+## 3. 2‑D Delaunay on XY
+tri <- delaunayn(as.matrix(xyz[,.(X, Y)]))     # indices (N_tri × 3)
+
+## 4. OpenGL render
+open3d(windowRect = c(50,50,1200,900))
+triangles3d(xyz$X[tri],  xyz$Y[tri],  xyz$TWT[tri],
+            col = "tan", specular = "white")
+axes3d();
+
+## 5. Export (OBJ)
+#writeOBJ(list(v = as.matrix(xyz), it = tri), "bodcaw_horizon_TIN.obj")
+
+```
+
+```{r}
+library(data.table);  library(alphashape3d);  library(rgl)
+
+# --- 1. read ---------------------------------------------------------------
+xyz <- fread("Bodcaw_horizon_X_Y_TWT.dat", header = FALSE,
+             col.names = c("X","Y","TWT"))
+xyz <- unique(xyz, by = c("X","Y","TWT"))          # drop exact duplicates
+
+# --- 2. vertical exaggeration ---------------------------------------------
+z_scale <- 1e4                                     # 10 000× lifts Z
+pts3D   <- as.matrix(xyz)
+pts3D[,3] <- pts3D[,3] * z_scale
+
+# --- 3. choose α  ----------------------------------------------------------
+# heuristic: 3× median NN edge length after scaling
+library(FNN)
+alpha <- 3 * median(knn.dist(scale(pts3D), k = 6))
+
+# --- 4. α‑shape with jitter -----------------------------------------------
+ash <- ashape3d(pts3D, alpha = alpha,
+                pert = TRUE, eps = 1e-8)           # eps ~ 1 nm in ^scaled^ units
+
+# --- 5. convert to mesh & restore scale ------------------------------------
+mesh <- as.mesh3d(ash)
+mesh$vb[3,] <- mesh$vb[3,] / z_scale               # back to real TWT seconds
+
+open3d(windowRect = c(50, 50, 1400, 900))
+shade3d(mesh, col = "tan"); axes3d()
+title3d(main = sprintf("Bodcaw horizon — α = %.3f (Z‑scale %g)", alpha, z_scale),
+        xlab = "X", ylab = "Y", zlab = "TWT (s)")
+```
+
+
+
+```{r}
+
+ # Test something really quick
+
+## --- 0. libraries -------------
+library(data.table)    # fast ingest
+library(alphashape3d)   # alpha-shape
+library(rgl)            # OpenGL viewer
+# optional: library(Rvcg)  # Ball‑Pivoting alternative
+
+## --- 1. read & QC -------------
+xyz <- fread("Bodcaw_horizon_X_Y_TWT.dat", header = FALSE,
+             col.names = c("X","Y","TWT"))
+bad   <- !is.finite(as.matrix(xyz))
+if (any(bad)) xyz <- xyz[!bad]            # drop non‑finite rows
+
+## --- 2. centre & rescale -------
+ctr       <- colMeans(xyz[,.(X,Y,TWT)])
+xyz_c     <- sweep(as.matrix(xyz), 2, ctr)     # subtract centroids
+scale_fac <- max(abs(xyz_c))                  # one‑half box size
+xyz_n     <- xyz_c / scale_fac                # now ∈[‑1,1]
+
+## --- 3. pick α heuristic -------
+## α ≈ 2–3× median edge length of k‑NN graph
+library(FNN)
+med_edge <- median(knn.dist(xyz_n, k = 6))
+alpha    <- 3 * med_edge                     # tune 2–5× if needed
+
+## --- 4. build alpha‑shape -------
+ash <- ashape3d(xyz_n, alpha = alpha)
+
+## --- 5. visualise --------------
+open3d(windowRect = c(50,50,1200,900))
+shade3d(ash$triang, col = "tan"); axes3d()
+title3d(main = sprintf("Bodcaw horizon  —  α = %.4f", alpha),
+        xlab = "X", ylab = "Y", zlab = "TWT (scaled)")
+
+```
+
+```{r}
+library(data.table);   library(geometry);   library(rgl)
+
+## 1. Load
+xyz <- fread("Bodcaw_horizon_X_Y_TWT.dat", header = FALSE,
+             col.names = c("X","Y","TWT"))
+
+## 2. Optional: thin duplicates (exact XY repeats)
+xyz <- unique(xyz, by = c("X", "Y", "TWT"))
+# Calculate depth from TWT by doing (TWT/2)*2000
+xyz$TWT <- (xyz$TWT/2) * 200000
+
+## 3. 2‑D Delaunay on XY
+tri <- delaunayn(as.matrix(xyz[,.(X, Y)]))     # indices (N_tri × 3)
+
+## 4. OpenGL render
+open3d(windowRect = c(50,50,1200,900))
+triangles3d(xyz$X[tri],  xyz$Y[tri],  xyz$TWT[tri],
+            col = "tan", specular = "white")
+axes3d();
+
+## 5. Export (OBJ)
+#writeOBJ(list(v = as.matrix(xyz), it = tri), "bodcaw_horizon_TIN.obj")
+
+```

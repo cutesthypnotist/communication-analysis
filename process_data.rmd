@@ -22,6 +22,8 @@ install.packages("ARTool")
 install.packages("emmeans")
 ```
 
+
+
 ```{r}
 # List of required packages
 required_packages <- c(
@@ -200,6 +202,10 @@ options("digits.secs"=6)
 
 
 
+
+
+
+
 Creates the round times for each subject, we'll use this a lot.
 
 ```{r}
@@ -275,6 +281,1722 @@ subject_rounds
 ```
 
 
+```{r}
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+combined_segments_per_round_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/timings_updated.csv$") %>%
+  map_dfr(.f = function(timings_updated_path) {
+    print(timings_updated_path)
+    segments_path <- str_replace(timings_updated_path, "timings_updated.csv", "segments.csv")
+    timings <- read_csv(timings_updated_path, show_col_types = FALSE)
+    segments <- read_csv(segments_path, show_col_types = FALSE)
+    
+    # Process segments and join with timings
+    segments_per_round <- segments %>%
+      mutate(text = tolower(text),  # Convert text to lower case
+             text = str_trim(text),  # Trim whitespace
+             text = replace_contraction(text),  # Replace contractions using textclean
+             text = str_replace_all(text, "[[:punct:]]", "")) %>%  # Remove punctuation
+      mutate(across(c(start, end), as.numeric))
+      
+    
+    timings_dt <- setDT(timings)
+    segments_per_round_dt <- setDT(segments_per_round) %>% .[timings_dt, on = .(start <= end, end >= start), allow.cartesian = TRUE]
+    segments_per_round <- segments_per_round_dt %>% as.data.frame()
+        
+      #right_join(timings, by = character()) %>%
+      #filter(start >= start.x & end <= end.x) %>%
+      #select(round, task, start = start.x, end = end.x, text)
+    segments_per_round <- segments_per_round %>% relocate(round, task, start, end, text)
+    # Combine text for each round and task
+    combined_text_per_round <- segments_per_round %>%
+      group_by(round, task, start, end) %>%
+      summarise(combined_text = paste(text, collapse = " "), .groups = 'drop')  # Combine text entries into a single string
+    # Now we just want to add in the subject id to the round and task
+    subject_id <- substr(basename(dirname(timings_updated_path)), 1, 7)
+    combined_text_per_round <- combined_text_per_round %>% mutate(subject_id = subject_id)
+    combined_text_per_round
+  })
+#move subject_id before round
+combined_segments_per_round_all <- combined_segments_per_round_all %>% relocate(subject_id, .before = round)
+combined_segments_per_round_all
+
+# Save the result to a new CSV file
+write_csv(combined_segments_per_round_all, file.path(path_to_files, "combined_segments_per_round_all.csv"))
+
+
+#So instead load this from the csv now
+combined_segments_per_round_all_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/combined_segments_per_round_all.csv"
+combined_segments_per_round_all <- read_csv(combined_segments_per_round_all_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
+combined_segments_per_round_all
+```
+
+Now we want to load up instructional_strategies.csv in the root and merge with subject_rounds_dt on round = round_id and task = task_id (the columns in instructional strategies will need to be renamed first)
+
+```{r}
+instructional_strategies_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/instructional_strategies.csv"
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+instructional_strategies_data <- read_csv(instructional_strategies_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
+instructional_strategies_data <- instructional_strategies_data %>% rename(round_id = round, task_id = task)
+instructional_strategies_data_dt <- instructional_strategies_data %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+instructional_strategies_data_dt
+instructional_strategies_data_dt_merged <- merge(instructional_strategies_data_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+instructional_strategies_data_dt_merged
+# Rename instructional strategy values 'dir' to 'Spatial', 'min' to 'Minimal', 'Max' to 'Descriptive'
+instructional_strategies_data_dt_merged <- instructional_strategies_data_dt_merged %>%
+  mutate(across(c("instructional_strategy"), ~str_replace_all(., c("dir" = "Spatial", "min" = "Minimal", "max" = "Descriptive"))))
+instructional_strategies_data_dt_merged 
+
+# Find all NA values in gaze condition and instructional strategy
+instructional_strategies_data_dt_merged_na <- instructional_strategies_data_dt_merged %>% filter(is.na(gaze_condition) | is.na(instructional_strategy))
+instructional_strategies_data_dt_merged_na
+# now we want to show a multi bar plot of the count of each instructional strategy within each gaze condition (on or off), so it should show on the x-axis On and Off and each bar should be the count of each instructional strategy, also the x-axis gaze group label on/off should be on the bottom)
+instructional_strategies_data_dt_merged %>%
+  ggplot(aes(x = gaze_condition, fill = instructional_strategy)) +
+  geom_bar(position = "dodge") +
+  labs(title = "", x = "Gaze Condition", y = "# of Trials Where Subjects Used This Strategy") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("Off" = "Gaze Off", "On" = "Gaze On"))
+
+```
+
+
+So this gives us a multi group bar chart of the count of each instructional strategy within each gaze condition, but now we want to group it further by the task type (Locate, Alignment, Task) and the task condition. The task type can be figured out from the task_id, specifically if task_id %% 3 == 1 then it is Locate, if task_id %% 3 == 2 then it is Alignment, and if task_id %% 3 == 0 then it is Match. Furthermore, thet ask_condition is already in the correct format. We will want to facet by task type and task condition.
+```{r}
+# Now we want to group it further by the task type and task condition
+instructional_strategies_data_dt_merged_tt_tc <- instructional_strategies_data_dt_merged %>%
+  mutate(task_id = as.numeric(task_id)) %>%
+  setDT() %>% 
+  .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Alignment"] %>% .[task_id %% 3 == 0, task_type := "Match"] %>% as.data.frame()
+instructional_strategies_data_dt_merged_tt_tc
+
+# We want to filter out the Locate task from the facet for now. We'll just look at it later individually.
+instructional_strategies_data_dt_merged_tt_tc_nl <- instructional_strategies_data_dt_merged_tt_tc %>% filter(task_type != "Locate")
+instructional_strategies_data_dt_merged_tt_tc_nl
+# Now we want to facet by task type and task condition, the task condition should be labelled from "Correct" to "Student was Correct after instruction"
+# and "Incorrect" to "Student made an Error after instruction", also it would be easier to swap the gaze condition and task condition so the top level group is gaze and the second level group is task condition
+# Now we want to group it further by the task type and task condition
+instructional_strategies_data_dt_merged_tt_tc <- instructional_strategies_data_dt_merged %>%
+  mutate(task_id = as.numeric(task_id)) %>%
+  setDT() %>%
+  .[task_id %% 3 == 1, task_type := "Locate"] %>%
+  .[task_id %% 3 == 2, task_type := "Alignment"] %>%
+  .[task_id %% 3 == 0, task_type := "Match"] %>%
+  as.data.frame()
+instructional_strategies_data_dt_merged_tt_tc
+
+# We want to filter out the Locate task from the facet for now. We'll just look at it later individually.
+instructional_strategies_data_dt_merged_tt_tc_nl <- instructional_strategies_data_dt_merged_tt_tc %>% filter(task_type != "Locate")
+instructional_strategies_data_dt_merged_tt_tc_nl
+# Now we want to facet by task type and task condition, the task condition should be labelled from "Correct" to "Student was Correct after instruction"
+# and "Incorrect" to "Student made an Error after instruction", also it would be easier to swap the gaze condition and task condition so the top level group is gaze and the second level group is task condition
+instructional_strategies_data_dt_merged_tt_tc_nl %>%
+  mutate(task_condition = recode(task_condition, 
+                                 "Correct" = "Student Correct", 
+                                 "Incorrect" = "Student Error"),
+         gaze_condition = recode(gaze_condition, 
+                                 "On" = "Gaze On", 
+                                 "Off" = "Gaze Off")) %>%
+  ggplot(aes(x = task_condition, fill = instructional_strategy)) +
+  geom_bar(position = "dodge") +
+  labs(title = "", x = "", y = "# of Trials Where Subjects Used This Strategy") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("Student Correct", "Student Error")) +
+  facet_grid(task_type ~ gaze_condition) +
+  theme(
+    strip.text = element_text(size = 10, face = "bold"),
+    axis.text.x = element_text(size = 10, face = "bold", angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 10, face = "bold"),
+    legend.text = element_text(size = 10)
+  )
+```
+
+So the instructional strategy table we want to join on anything we awnt to analyze is this one:
+```{r}
+instructional_strategies_data_dt_merged_tt_tc
+# Step 1: Group by subject_id and round_id to get the minimum unity_log_time along with gaze_condition
+round_times <- subject_ratings %>%
+  group_by(subject_id, round_id) %>%
+  summarise(min_unity_log_time = min(unity_log_time, na.rm = TRUE),
+            gaze_condition = first(gaze_condition)) %>%
+  ungroup()
+
+# Step 2: Calculate the duration of each round
+# We use the `lag` function to get the previous round's min_unity_log_time
+round_durations <- round_times %>%
+  arrange(subject_id, round_id) %>%
+  group_by(subject_id) %>%
+  mutate(previous_time = lag(min_unity_log_time),
+         round_duration = if_else(is.na(previous_time), min_unity_log_time, min_unity_log_time - previous_time))
+
+round_durations
+
+mean_durations <- round_durations %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(mean_duration = mean(round_duration, na.rm = TRUE))
+
+mean_durations
+
+# Step 4: Reshape data from long to wide format
+wide_mean_durations <- mean_durations %>%
+  pivot_wider(names_from = gaze_condition, 
+              values_from = mean_duration,
+              names_prefix = "mean_duration_")
+
+wide_mean_durations
+
+
+# Assuming wide_mean_durations is already loaded with your data
+# Ensure it's in the correct format
+wide_mean_durations <- wide_mean_durations %>%
+  pivot_longer(cols = starts_with("mean_duration"), names_to = "gaze_condition", values_to = "mean_duration") %>%
+  mutate(gaze_condition = sub("mean_duration_", "", gaze_condition))
+
+# Make it a data frame
+wide_mean_durations <- wide_mean_durations %>% as.data.frame()
+wide_mean_durations
+# Perform Wilcoxon signed-rank test using rstatix
+duration_wilcox <- wide_mean_durations %>%
+  rstatix::wilcox_test(mean_duration ~ gaze_condition, paired = TRUE)
+duration_wilcox.p <- duration_wilcox |> add_x_position(x="gaze_condition")
+duration_wilcox 
+print("Z for Duration")
+compute_wilcox_summary(duration_wilcox)
+x_data <- wide_mean_durations %>% 
+  filter(gaze_condition == "On") %>% 
+  pull(mean_duration)
+y_data <- wide_mean_durations %>% 
+  filter(gaze_condition == "Off") %>% 
+  pull(mean_duration)
+
+z_duration <- wilcoxonZ(x = x_data, y = y_data, paired = TRUE, correct = TRUE, digits = 5)
+z_duration
+print(paste("Z for Duration:", z_duration))
+
+```
+
+
+Join this table on the combined segments table using task_id = task
+
+```{r}
+# First rename round and task to round_id and task_id
+library(dplyr)
+combined_segments_per_round_all_renamed <- combined_segments_per_round_all %>% rename(round_id = round, task_id = task, task_start = start, task_end = end)
+combined_segments_per_round_all_dt <- combined_segments_per_round_all_renamed %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+# Now join it on the instructional_strategies_data_dt_merged_tt_tc table
+combined_segments_per_round_all_dt_merged <- merge(combined_segments_per_round_all_dt, instructional_strategies_data_dt_merged_tt_tc, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+
+combined_segments_per_round_all_dt_merged
+#Remove the combined_text column
+combined_segments_per_round_all_dt_merged <- combined_segments_per_round_all_dt_merged %>% dplyr::select(-combined_text)
+combined_segments_per_round_all_dt_merged
+
+# We want to get the duration of each task
+combined_segments_per_round_all_dt_merged <- combined_segments_per_round_all_dt_merged %>% mutate(task_duration = task_start - task_end)
+combined_segments_per_round_all_dt_merged
+
+#Now reorder it so that task duration is before task_start
+combined_segments_per_round_all_dt_merged <- combined_segments_per_round_all_dt_merged %>% relocate(task_duration, .before = task_start) %>% relocate(gaze_condition, .before = task_duration) %>% relocate(instructional_strategy, .before = task_duration) %>% relocate(task_condition, .before = instructional_strategy)
+#truncate task_duration to 3 decimal places
+combined_segments_per_round_all_dt_merged$task_duration <- round(combined_segments_per_round_all_dt_merged$task_duration, 3)
+# Now join round_durations on the subject_id and round_id and we only want the round_durations column
+#If you get an error you will need to run the section where it computes the round_durations later below
+round_durations_dt <- round_durations %>% setDT() %>% setkey("subject_id", "round_id") %>% dplyr::select(subject_id, round_id, round_duration)
+combined_segments_per_round_all_dt_merged <- merge(combined_segments_per_round_all_dt_merged, round_durations_dt, by = c("subject_id", "round_id"), all.x = TRUE)
+combined_segments_per_round_all_dt_merged
+
+#Round round_duration to 3 decimal places and move it after task_duration
+combined_segments_per_round_all_dt_merged$round_duration <- round(combined_segments_per_round_all_dt_merged$round_duration, 3)
+combined_segments_per_round_all_dt_merged <- combined_segments_per_round_all_dt_merged %>% relocate(round_duration, .after = task_duration)
+
+# Now save it to a new csv
+write_csv(combined_segments_per_round_all_dt_merged, file.path(path_to_files, "combined_segments_per_round_all_dt_merged.csv"))
+
+
+# Get the mean task_duration by each instructional strategy
+task_durations <- combined_segments_per_round_all_dt_merged %>%
+  group_by(subject_id, instructional_strategy, gaze_condition) %>%
+  summarise(mean_task_duration = median(task_duration, na.rm = TRUE), .groups = "drop")
+
+task_durations
+
+# Reorder instructional_strategy levels to match desired plot order 
+task_durations$instructional_strategy <- factor(task_durations$instructional_strategy, levels = c("Descriptive", "Spatial", "Minimal"))
+
+
+# First do a simple box and whiskers
+ggplot(task_durations, aes(x = gaze_condition, y = mean_task_duration, fill = instructional_strategy)) +
+  geom_boxplot() +
+  labs(title = "Task Duration by Instructional Strategy and Gaze Condition",
+       x = "Gaze Condition", 
+       y = "Mean Task Duration (s)") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Descriptive" = "#FFD180", "Spatial" = "#81D4FA", "Minimal" = "#FF7043")) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 12)
+  )
+# Now make it so that it's grouped by instructional strategy and there's two colors for gaze condition (so 2 boxes for each instructional strategy, 6 boxes total)
+ggplot(task_durations, aes(x = instructional_strategy, y = mean_task_duration, fill = gaze_condition)) +
+  geom_boxplot(position = position_dodge(width = 0.9)) +
+  labs(title = "Task Duration by Instructional Strategy and Gaze Condition",
+       x = "Instructional Strategy", 
+       y = "Mean Task Duration (s)") +
+  theme_minimal() +
+  scale_fill_manual(values = c("On" = "#FFD180", "Off" = "#81D4FA")) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 12)
+  )
+
+# Plotting
+library(ggplot2)
+library(dplyr)
+
+# Calculate summary statistics (mean, Q1, Q3)
+summary_data <- task_durations %>%
+  group_by(gaze_condition, instructional_strategy) %>%
+  summarise(
+    mean = median(mean_task_duration),
+    ymin = quantile(mean_task_duration, 0.25),  # Q1
+    ymax = quantile(mean_task_duration, 0.75),  # Q3
+    .groups = 'drop'
+  )
+
+# Material-like colors for each instructional strategy
+material_colors <- c("Descriptive" = "#FFD180", "Spatial" = "#81D4FA", "Minimal" = "#FF7043")
+
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data, aes(x = gaze_condition, y = mean, fill = instructional_strategy),
+           stat = "identity", position = position_dodge(width = 0.9), width = 0.25, color = "black", alpha = 0.7) +
+  
+  # 2. Boxplot elements: IQR and median
+  geom_errorbar(data = summary_data, aes(x = gaze_condition, ymin = ymin, ymax = ymax, group = instructional_strategy),
+                position = position_dodge(width = 0.9), width = 0.2, size = 1) +
+  
+  # 3. Violin plot
+  geom_violin(data = task_durations, aes(x = gaze_condition, y = mean_task_duration, fill = instructional_strategy),
+              position = position_dodge(width = 0.9), trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+  geom_jitter(data = task_durations, aes(x = gaze_condition, y = mean_task_duration, color = instructional_strategy),
+              position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.9), size = 1.5, alpha = 1) +
+  
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  scale_color_manual(values = material_colors) +
+  
+  # Labels
+  labs(title = "Task Duration by Instructional Strategy and Gaze Condition",
+       x = "Gaze Condition", 
+       y = "Median Task Duration (s)") +
+  # Legend
+  guides(fill = guide_legend(title = "Instructional Strategy"),
+         color = guide_legend(title = "Instructional Strategy")) +
+  # Theme
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 12)
+  )
+
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# Keep palette consistent with prior figures
+strategy_palette <- c(
+  "Descriptive" = "#FFD180",
+  "Spatial"     = "#81D4FA",
+  "Minimal"     = "#FF7043"
+)
+
+# Aggregate across ALL subjects and compute per-gaze proportions
+pie_by_gaze <- instructional_strategies_data_dt_merged_tt_tc %>%
+  filter(!is.na(instructional_strategy), !is.na(gaze_condition)) %>%
+  mutate(
+    instructional_strategy = factor(instructional_strategy,
+                                    levels = c("Descriptive", "Spatial", "Minimal")),
+    # Ensure readable facet labels regardless of upstream coding
+    gaze_condition = recode(gaze_condition, "On" = "Gaze On", "Off" = "Gaze Off")
+  ) %>%
+  count(gaze_condition, instructional_strategy, name = "n") %>%
+  group_by(gaze_condition) %>%
+  mutate(
+    pct = n / sum(n),
+    # Hide labels for slivers to avoid collisions; adjust 0.035 as needed
+    lbl = ifelse(pct < 0.035, "", paste0(instructional_strategy, "\n", n, " (",
+                                         percent(pct, accuracy = 0.1), ")"))
+  ) %>%
+  ungroup()
+
+# Two pie charts faceted by gaze condition
+ggplot(pie_by_gaze, aes(x = 1, y = pct, fill = instructional_strategy)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  facet_wrap(~ gaze_condition, ncol = 2) +
+  scale_fill_manual(values = strategy_palette, drop = FALSE) +
+  geom_text(aes(label = lbl), position = position_stack(vjust = 0.5), size = 4) +
+  labs(title = "Instructional Strategies Across All Subjects by Gaze Condition",
+       fill = "Strategy") +
+  theme_void(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "bottom"
+  )
+
+# --- Optional donut variant (uncomment to use) ---
+# ggplot(pie_by_gaze, aes(x = 2, y = pct, fill = instructional_strategy)) +
+#   geom_col(width = 0.8, color = "white") +
+#   coord_polar(theta = "y") +
+#   facet_wrap(~ gaze_condition, ncol = 2) +
+#   scale_fill_manual(values = strategy_palette, drop = FALSE) +
+#   xlim(0.5, 2.5) +
+#   geom_text(aes(label = lbl), position = position_stack(vjust = 0.5), size = 4) +
+#   labs(title = "Instructional Strategies Across All Subjects by Gaze Condition",
+#        fill = "Strategy") +
+#   theme_void(base_size = 14) +
+#   theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+#         legend.position = "bottom")
+
+```
+
+
+```{r}
+#summary_data
+
+#task_durations
+
+combined_segments_per_round_all_dt_merged
+# First remove all task_type Locaet
+combined_segments_per_round_all_dt_merged_nl <- combined_segments_per_round_all_dt_merged %>% filter(task_type != "Locate")
+combined_segments_per_round_all_dt_merged_nl
+task_durations_cond <- combined_segments_per_round_all_dt_merged %>%
+  group_by(subject_id,
+           instructional_strategy,
+           task_condition) %>%
+  summarise(
+    mean_task_duration = median(task_duration, na.rm = TRUE),  # median 🔢
+    .groups = "drop"
+  )
+
+# 2. Factor‐level ordering for consistent legend
+task_durations_cond$instructional_strategy <- factor(
+  task_durations_cond$instructional_strategy,
+  levels = c("Descriptive", "Spatial", "Minimal")
+)
+
+# 3. Box-and-whisker plot by task_condition
+ggplot(task_durations_cond,
+       aes(x = task_condition, 
+           y = mean_task_duration, 
+           fill = instructional_strategy)) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +  # dodge for side-by-side
+  labs(
+    title = "Median Task Duration by Instructional Strategy and Task Condition",
+    x     = "Task Condition",
+    y     = "Median Task Duration (s)"
+  ) +
+  scale_fill_manual(
+    values = c("Descriptive" = "#FFD180", 
+               "Spatial"     = "#81D4FA", 
+               "Minimal"     = "#FF7043")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title       = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position  = "bottom",
+    axis.text.x      = element_text(size = 12, face = "bold"),
+    axis.text.y      = element_text(size = 12)
+  )
+# If needed, exclude a specific task_type (e.g., "Locate")
+combined_nolocate <- combined_segments_per_round_all_dt_merged %>%
+  filter(task_type != "Locate")  # filter 🚫
+
+# Compute per‐subject medians for task_type
+task_durations_type <- combined_nolocate %>%
+  group_by(subject_id,
+           instructional_strategy,
+           task_type) %>%
+  summarise(
+    mean_task_duration = median(task_duration, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Ensure factor ordering
+task_durations_type$instructional_strategy <- factor(
+  task_durations_type$instructional_strategy,
+  levels = c("Descriptive", "Spatial", "Minimal")
+)
+
+# Plot
+ggplot(task_durations_type,
+       aes(x = task_type, 
+           y = mean_task_duration, 
+           fill = instructional_strategy)) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +
+  labs(
+    title = "Median Task Duration by Instructional Strategy and Task Type",
+    x     = "Task Type",
+    y     = "Median Task Duration (s)"
+  ) +
+  scale_fill_manual(
+    values = c("Descriptive" = "#FFD180", 
+               "Spatial"     = "#81D4FA", 
+               "Minimal"     = "#FF7043")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title       = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position  = "bottom",
+    axis.text.x      = element_text(size = 12, face = "bold", angle = 45, hjust = 1),
+    axis.text.y      = element_text(size = 12)
+  )
+
+
+
+```
+
+```{r my_big_plot, fig.width=12, fig.height=6, dpi=300}
+library(dplyr)
+library(ggplot2)
+
+# 1. For task_condition
+task_durations_cond2 <- combined_segments_per_round_all_dt_merged %>%
+  group_by(
+    subject_id,
+    instructional_strategy,
+    task_condition,
+    gaze_condition               # include this column 🔍 [dplyr group_by](https://www.google.com/search?q=dplyr+group_by)
+  ) %>%
+  summarise(
+    mean_task_duration = median(task_duration, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    instructional_strategy = factor(
+      instructional_strategy,
+      levels = c("Descriptive","Spatial","Minimal")
+    )
+  )
+
+# 2. For task_type (excluding "Locate")
+task_durations_type2 <- combined_segments_per_round_all_dt_merged %>%
+  filter(task_type != "Locate") %>%
+  group_by(
+    subject_id,
+    instructional_strategy,
+    task_type,
+    gaze_condition               # include here too
+  ) %>%
+  summarise(
+    mean_task_duration = median(task_duration, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    instructional_strategy = factor(
+      instructional_strategy,
+      levels = c("Descriptive","Spatial","Minimal")
+    )
+  )
+
+ggplot(task_durations_cond2,
+       aes(
+         x    = task_condition,
+         y    = mean_task_duration,
+         fill = instructional_strategy
+       )) +
+  geom_boxplot(
+    position = position_dodge(width = 0.8), 
+    width    = 0.6
+  ) +
+  facet_wrap(
+    ~ gaze_condition, 
+    ncol   = 2                     # two panels side by side 🎨 [facet_wrap](https://www.google.com/search?q=ggplot2+facet_wrap)
+  ) +
+  labs(
+    title = "Median Task Duration by Instructional Strategy\nand Task Condition, by Gaze Condition",
+    x     = "Task Condition",
+    y     = "Median Duration (s)"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Descriptive" = "#FFD180",
+      "Spatial"     = "#81D4FA",
+      "Minimal"     = "#FF7043"
+    )
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text      = element_text(size = 12, face = "bold"),
+    plot.title      = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    axis.text.x     = element_text(size = 12, face = "bold"),
+    axis.text.y     = element_text(size = 12)
+  )
+ggplot(task_durations_type2,
+       aes(
+         x    = task_type,
+         y    = mean_task_duration,
+         fill = instructional_strategy
+       )) +
+  geom_boxplot(
+    position = position_dodge(width = 0.8),
+    width    = 0.6
+  ) +
+  facet_wrap(
+    ~ gaze_condition,
+    scales = "free_x",            # allow differing x‐axis labels length
+    ncol   = 2
+  ) +
+  labs(
+    title = "Median Task Duration by Instructional Strategy\nand Task Type, by Gaze Condition",
+    x     = "Task Type",
+    y     = "Median Duration (s)"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Descriptive" = "#FFD180",
+      "Spatial"     = "#81D4FA",
+      "Minimal"     = "#FF7043"
+    )
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text      = element_text(size = 12, face = "bold"),
+    plot.title      = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    axis.text.x     = element_text(size = 11, face = "bold", angle = 45, hjust = 1),
+    axis.text.y     = element_text(size = 12)
+  )
+
+
+task_durations_type2
+
+```
+
+TODO: Now let's investiga
+
+```{r}
+#Find the outliers
+# Calculating IQR and identifying outliers
+task_durations <- task_durations_type2 %>%
+  group_by(gaze_condition, instructional_strategy) %>%
+  mutate(
+    Q1 = quantile(mean_task_duration, 0.25),
+    Q3 = quantile(mean_task_duration, 0.75),
+    IQR = Q3 - Q1,
+    Lower_Bound = Q1 - 1.5 * IQR,
+    Upper_Bound = Q3 + 1.5 * IQR
+  ) %>%
+  ungroup() %>%
+  mutate(Outlier = mean_task_duration < Lower_Bound | mean_task_duration > Upper_Bound)
+
+# Optionally, filter to see only outliers
+outliers <- task_durations %>%
+  filter(Outlier)
+
+# Output outliers data
+print(outliers)
+
+```
+
+
+```{r}
+
+#First check that the count of trials across condition is evenly split.
+# First start with gaze condition
+# Check the count of trials across gaze condition
+task_durations_gaze_count <- task_durations %>%
+  group_by(gaze_condition) %>%
+  summarise(count = n(), .groups = "drop")
+task_durations_gaze_count
+# It's not split evenly, so figure out counts of gaze condition broken down by subject
+
+task_durations_gaze_count_subject <- task_durations %>%
+  group_by(subject_id, gaze_condition) %>%
+  summarise(count = n(), .groups = "drop")
+task_durations_gaze_count_subject
+
+```
+
+```{r my_big_plot, fig.width=12, fig.height=6, dpi=300}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+
+task_durations_clean <- task_durations_cond2
+
+# First, create aggregated data for pie charts
+# We'll sum total durations to show proportional time spent in each condition
+
+# 1. Overall distribution by Strategy × Correctness × Gaze
+pie_data_full <- task_durations_clean %>%
+  group_by(instructional_strategy, task_condition, gaze_condition) %>%
+  summarise(
+    total_duration = sum(mean_task_duration, na.rm = TRUE),
+    n_subjects = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    combined_label = paste(instructional_strategy, task_condition, gaze_condition, sep = "\n")
+  )
+
+# 2. Create nested pie charts - one for each instructional strategy
+pie_by_strategy <- task_durations_clean %>%
+  group_by(instructional_strategy, task_condition, gaze_condition) %>%
+  summarise(
+    total_duration = sum(mean_task_duration, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(instructional_strategy) %>%
+  mutate(
+    pct = total_duration / sum(total_duration),
+    label = paste0(task_condition, "\n", gaze_condition, "\n", 
+                   round(pct * 100, 1), "%")
+  )
+
+# Create individual pie charts for each strategy
+p1 <- ggplot(pie_by_strategy %>% filter(instructional_strategy == "Descriptive"),
+             aes(x = "", y = total_duration, 
+                 fill = interaction(task_condition, gaze_condition))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Descriptive Strategy", fill = "Condition") +
+  scale_fill_manual(values = c("Incorrect.Off" = "#FF9999",
+                               "Incorrect.On" = "#FF6666",
+                               "Correct.Off" = "#66CCCC",
+                               "Correct.On" = "#00CCCC"),
+                    labels = c("Incorrect.Off" = "Incorrect/Off",
+                              "Incorrect.On" = "Incorrect/On",
+                              "Correct.Off" = "Correct/Off",
+                              "Correct.On" = "Correct/On")) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+p2 <- ggplot(pie_by_strategy %>% filter(instructional_strategy == "Spatial"),
+             aes(x = "", y = total_duration, 
+                 fill = interaction(task_condition, gaze_condition))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Spatial Strategy", fill = "Condition") +
+  scale_fill_manual(values = c("Incorrect.Off" = "#FF9999",
+                               "Incorrect.On" = "#FF6666",
+                               "Correct.Off" = "#66CCCC",
+                               "Correct.On" = "#00CCCC"),
+                    labels = c("Incorrect.Off" = "Incorrect/Off",
+                              "Incorrect.On" = "Incorrect/On",
+                              "Correct.Off" = "Correct/Off",
+                              "Correct.On" = "Correct/On")) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+p3 <- ggplot(pie_by_strategy %>% filter(instructional_strategy == "Minimal"),
+             aes(x = "", y = total_duration, 
+                 fill = interaction(task_condition, gaze_condition))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Minimal Strategy", fill = "Condition") +
+  scale_fill_manual(values = c("Incorrect.Off" = "#FF9999",
+                               "Incorrect.On" = "#FF6666",
+                               "Correct.Off" = "#66CCCC",
+                               "Correct.On" = "#00CCCC"),
+                    labels = c("Incorrect.Off" = "Incorrect/Off",
+                              "Incorrect.On" = "Incorrect/On",
+                              "Correct.Off" = "Correct/Off",
+                              "Correct.On" = "Correct/On")) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# Combine the three pie charts
+combined_pies <- p1 + p2 + p3 + 
+  plot_layout(ncol = 3) +
+  plot_annotation(title = "Task Duration Distribution by Strategy and Conditions",
+                  theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5)))
+
+print(combined_pies)
+
+# 3. Alternative: Nested donut charts for each gaze condition
+pie_by_gaze <- task_durations_clean %>%
+  group_by(gaze_condition, instructional_strategy, task_condition) %>%
+  summarise(
+    total_duration = sum(mean_task_duration, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(gaze_condition) %>%
+  mutate(
+    pct = total_duration / sum(total_duration),
+    label = paste0(round(pct * 100, 1), "%")
+  )
+
+# Donut chart for Gaze Off
+p_off <- ggplot(pie_by_gaze %>% filter(gaze_condition == "Off"),
+                aes(x = 2, y = total_duration, 
+                    fill = interaction(instructional_strategy, task_condition))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  xlim(0.5, 2.5) +  # Creates the donut hole
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze Off", fill = "Strategy/Correctness") +
+  scale_fill_manual(values = c("Descriptive.Incorrect" = "#FFB366",
+                               "Descriptive.Correct" = "#FFD180",
+                               "Spatial.Incorrect" = "#4FC3F7",
+                               "Spatial.Correct" = "#81D4FA",
+                               "Minimal.Incorrect" = "#FF5722",
+                               "Minimal.Correct" = "#FF7043"),
+                    labels = c("Descriptive.Incorrect" = "Desc/Incorrect",
+                              "Descriptive.Correct" = "Desc/Correct",
+                              "Spatial.Incorrect" = "Spatial/Incorrect",
+                              "Spatial.Correct" = "Spatial/Correct",
+                              "Minimal.Incorrect" = "Min/Incorrect",
+                              "Minimal.Correct" = "Min/Correct")) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+
+# Donut chart for Gaze On
+p_on <- ggplot(pie_by_gaze %>% filter(gaze_condition == "On"),
+               aes(x = 2, y = total_duration, 
+                   fill = interaction(instructional_strategy, task_condition))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  xlim(0.5, 2.5) +  # Creates the donut hole
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze On", fill = "Strategy/Correctness") +
+  scale_fill_manual(values = c("Descriptive.Incorrect" = "#FFB366",
+                               "Descriptive.Correct" = "#FFD180",
+                               "Spatial.Incorrect" = "#4FC3F7",
+                               "Spatial.Correct" = "#81D4FA",
+                               "Minimal.Incorrect" = "#FF5722",
+                               "Minimal.Correct" = "#FF7043"),
+                    labels = c("Descriptive.Incorrect" = "Desc/Incorrect",
+                              "Descriptive.Correct" = "Desc/Correct",
+                              "Spatial.Incorrect" = "Spatial/Incorrect",
+                              "Spatial.Correct" = "Spatial/Correct",
+                              "Minimal.Incorrect" = "Min/Incorrect",
+                              "Minimal.Correct" = "Min/Correct")) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+
+# Combine the donut charts
+donut_combined <- p_off + p_on +
+  plot_layout(ncol = 2) +
+  plot_annotation(title = "Task Duration Distribution by Gaze Condition",
+                  subtitle = "Showing Strategy × Correctness proportions within each gaze condition",
+                  theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+                               plot.subtitle = element_text(size = 12, hjust = 0.5)))
+
+print(donut_combined)
+
+# 4. Sunburst-style nested pie (simulated with multiple rings)
+# This shows the hierarchical nature: Gaze -> Strategy -> Correctness
+
+# First ring: Gaze condition
+gaze_totals <- task_durations_clean %>%
+  group_by(gaze_condition) %>%
+  summarise(total = sum(mean_task_duration, na.rm = TRUE), .groups = "drop") %>%
+  mutate(level = "inner", start = lag(cumsum(total), default = 0), end = cumsum(total))
+
+# Second ring: Strategy within gaze
+strategy_totals <- task_durations_clean %>%
+  group_by(gaze_condition, instructional_strategy) %>%
+  summarise(total = sum(mean_task_duration, na.rm = TRUE), .groups = "drop") %>%
+  arrange(gaze_condition, instructional_strategy) %>%
+  mutate(level = "middle", 
+         cumtotal = cumsum(total),
+         start = lag(cumtotal, default = 0), 
+         end = cumtotal)
+
+# Third ring: Correctness within strategy and gaze
+correct_totals <- task_durations_clean %>%
+  group_by(gaze_condition, instructional_strategy, task_condition) %>%
+  summarise(total = sum(mean_task_duration, na.rm = TRUE), .groups = "drop") %>%
+  arrange(gaze_condition, instructional_strategy, task_condition) %>%
+  mutate(level = "outer",
+         cumtotal = cumsum(total),
+         start = lag(cumtotal, default = 0), 
+         end = cumtotal)
+
+# Create a hierarchical pie chart using facets
+# Prepare data for stacked bars that will become rings
+ring_data <- task_durations_clean %>%
+  group_by(gaze_condition, instructional_strategy, task_condition) %>%
+  summarise(duration = sum(mean_task_duration, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    full_label = paste(gaze_condition, instructional_strategy, task_condition, sep = "-")
+  )
+
+# Create the sunburst chart
+sunburst <- ggplot(ring_data) +
+  # Outer ring (all details)
+  geom_bar(aes(x = 3, y = duration, 
+               fill = interaction(gaze_condition, instructional_strategy, task_condition)),
+           stat = "identity", width = 0.5) +
+  # Middle ring (strategy level)
+  geom_bar(data = ring_data %>% 
+             group_by(gaze_condition, instructional_strategy) %>% 
+             summarise(duration = sum(duration), .groups = "drop"),
+           aes(x = 2, y = duration, 
+               fill = interaction(gaze_condition, instructional_strategy)),
+           stat = "identity", width = 0.5) +
+  # Inner ring (gaze level)
+  geom_bar(data = ring_data %>% 
+             group_by(gaze_condition) %>% 
+             summarise(duration = sum(duration), .groups = "drop"),
+           aes(x = 1, y = duration, fill = gaze_condition),
+           stat = "identity", width = 0.5) +
+  coord_polar("y", start = 0) +
+  xlim(0, 3.5) +
+  labs(title = "Hierarchical Task Duration Distribution",
+       subtitle = "Inner: Gaze | Middle: Strategy | Outer: Correctness") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        legend.position = "bottom") +
+  scale_fill_manual(values = c(
+    # Gaze only (inner ring)
+    "Off" = "#FFB366",
+    "On" = "#81D4FA",
+    # Gaze.Strategy (middle ring)
+    "Off.Descriptive" = "#FFD180",
+    "Off.Spatial" = "#A5D6F7",
+    "Off.Minimal" = "#FF7043",
+    "On.Descriptive" = "#FFC947",
+    "On.Spatial" = "#81D4FA", 
+    "On.Minimal" = "#FF5722",
+    # Full details (outer ring) - using slightly different shades
+    "Off.Descriptive.Incorrect" = "#FFCC80",
+    "Off.Descriptive.Correct" = "#FFE0B2",
+    "Off.Spatial.Incorrect" = "#90CAF9",
+    "Off.Spatial.Correct" = "#BBDEFB",
+    "Off.Minimal.Incorrect" = "#FF8A65",
+    "Off.Minimal.Correct" = "#FFAB91",
+    "On.Descriptive.Incorrect" = "#FFB74D",
+    "On.Descriptive.Correct" = "#FFCC80",
+    "On.Spatial.Incorrect" = "#64B5F6",
+    "On.Spatial.Correct" = "#90CAF9",
+    "On.Minimal.Incorrect" = "#FF5722",
+    "On.Minimal.Correct" = "#FF7043"
+  ))
+
+print(sunburst)
+```
+
+```{r}
+
+#Double check 
+```
+
+
+```{r my_big_plot, fig.width=12, fig.height=6, dpi=300}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+library(sunburstR)
+# Install ggsunburst if needed: devtools::install_github("didacs/ggsunburst")
+library(ggsunburst)
+
+# Define consistent color palette for instructional strategies
+strategy_palette <- c(
+  "Descriptive" = "#FFD180",
+  "Spatial" = "#81D4FA",
+  "Minimal" = "#FF7043"
+)
+
+# ============================================================================
+# 1. INDIVIDUAL PIE CHARTS - With counts and percentages
+# ============================================================================
+
+# Create pie data for each combination with counts
+pie_data_individual <- task_durations_clean %>%
+  group_by(gaze_condition, task_condition, instructional_strategy) %>%
+  summarise(
+    total_duration = sum(mean_task_duration, na.rm = TRUE),
+    n_count = n(),  # Add count of observations
+    .groups = "drop"
+  ) %>%
+  group_by(gaze_condition, task_condition) %>%
+  mutate(
+    pct = total_duration / sum(total_duration),
+    # Include both count and percentage in label
+    label = paste0(instructional_strategy, "\n", 
+                   "(", n_count, ")\n",
+                   round(pct * 100, 1), "%")
+  )
+
+# Create 4 pie charts (2x2 grid) with counts
+p_off_incorrect <- ggplot(
+  pie_data_individual %>% filter(gaze_condition == "Off", task_condition == "Incorrect"),
+  aes(x = "", y = total_duration, fill = instructional_strategy)
+) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze Off - Incorrect", fill = "Strategy") +
+  scale_fill_manual(values = strategy_palette) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+p_off_correct <- ggplot(
+  pie_data_individual %>% filter(gaze_condition == "Off", task_condition == "Correct"),
+  aes(x = "", y = total_duration, fill = instructional_strategy)
+) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze Off - Correct", fill = "Strategy") +
+  scale_fill_manual(values = strategy_palette) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+p_on_incorrect <- ggplot(
+  pie_data_individual %>% filter(gaze_condition == "On", task_condition == "Incorrect"),
+  aes(x = "", y = total_duration, fill = instructional_strategy)
+) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze On - Incorrect", fill = "Strategy") +
+  scale_fill_manual(values = strategy_palette) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+p_on_correct <- ggplot(
+  pie_data_individual %>% filter(gaze_condition == "On", task_condition == "Correct"),
+  aes(x = "", y = total_duration, fill = instructional_strategy)
+) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Gaze On - Correct", fill = "Strategy") +
+  scale_fill_manual(values = strategy_palette) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    legend.position = "bottom"
+  )
+
+# Combine all 4 pie charts in a 2x2 grid
+individual_pies <- (p_off_incorrect | p_off_correct) / (p_on_incorrect | p_on_correct) +
+  plot_annotation(
+    title = "Instructional Strategy Distribution by Gaze and Correctness",
+    subtitle = "Showing counts (n) and percentages for each strategy",
+    theme = theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  )
+
+print(individual_pies)
+
+# ============================================================================
+# 2. SUNBURSTR - Proper hierarchy with corrected path structure
+# ============================================================================
+
+# Make sure we're using sunburstR package specifically
+# If you get an error, install it with: install.packages("sunburstR")
+library(sunburstR)
+
+# Prepare data for sunburstR with full hierarchy
+sunburst_data <- task_durations_clean %>%
+  group_by(gaze_condition, task_condition, instructional_strategy) %>%
+  summarise(
+    duration = sum(mean_task_duration, na.rm = TRUE),
+    count = n(),
+    .groups = "drop"
+  )
+
+# Create paths for sunburstR - it needs the full hierarchical path
+sunburst_r_full <- sunburst_data %>%
+  mutate(
+    # Create hierarchical paths
+    path = paste(
+      paste0("Gaze ", gaze_condition),
+      task_condition,
+      instructional_strategy,
+      sep = "-"
+    ),
+    size = round(duration, 2)
+  ) %>%
+  select(path, size)
+
+# Create the full sunburst with all three levels
+# Use sunburstR:: to ensure we're using the right function
+sb_full <- sunburstR::sunburst(sunburst_r_full)
+
+print(sb_full)
+cat("\n=== Full Sunburst: Gaze → Correctness → Strategy ===\n")
+
+# Alternative: Create two separate sunbursts for each gaze condition
+# This makes it easier to see the correctness → strategy breakdown
+
+# Sunburst for Gaze Off
+sunburst_off <- sunburst_data %>%
+  filter(gaze_condition == "Off") %>%
+  mutate(
+    path = paste(task_condition, instructional_strategy, sep = "-"),
+    size = round(duration, 2)
+  ) %>%
+  select(path, size)
+
+sb_off <- sunburstR::sunburst(sunburst_off)
+
+print(sb_off)
+cat("\n=== Gaze Off: Correctness → Strategy ===\n")
+
+# Sunburst for Gaze On
+sunburst_on <- sunburst_data %>%
+  filter(gaze_condition == "On") %>%
+  mutate(
+    path = paste(task_condition, instructional_strategy, sep = "-"),
+    size = round(duration, 2)
+  ) %>%
+  select(path, size)
+
+sb_on <- sunburstR::sunburst(sunburst_on)
+
+print(sb_on)
+cat("\n=== Gaze On: Correctness → Strategy ===\n")
+
+# ============================================================================
+# 3. PLOTLY SUNBURST - More reliable alternative
+# ============================================================================
+
+library(plotly)
+
+# Prepare data for plotly sunburst (more reliable than ggsunburst)
+# Build the hierarchical structure
+
+# Create labels and parents for plotly
+plotly_data <- data.frame(
+  labels = character(),
+  parents = character(),
+  values = numeric(),
+  ids = character(),
+  stringsAsFactors = FALSE
+)
+
+# Add root
+plotly_data <- rbind(plotly_data, data.frame(
+  labels = "Total",
+  parents = "",
+  values = sum(sunburst_data$duration),
+  ids = "Total"
+))
+
+# Add Gaze level
+gaze_summary <- sunburst_data %>%
+  group_by(gaze_condition) %>%
+  summarise(total = sum(duration), .groups = "drop")
+
+for(i in 1:nrow(gaze_summary)) {
+  plotly_data <- rbind(plotly_data, data.frame(
+    labels = paste("Gaze", gaze_summary$gaze_condition[i]),
+    parents = "Total",
+    values = gaze_summary$total[i],
+    ids = paste("Gaze", gaze_summary$gaze_condition[i])
+  ))
+}
+
+# Add Correctness level
+correct_summary <- sunburst_data %>%
+  group_by(gaze_condition, task_condition) %>%
+  summarise(total = sum(duration), .groups = "drop")
+
+for(i in 1:nrow(correct_summary)) {
+  plotly_data <- rbind(plotly_data, data.frame(
+    labels = correct_summary$task_condition[i],
+    parents = paste("Gaze", correct_summary$gaze_condition[i]),
+    values = correct_summary$total[i],
+    ids = paste("Gaze", correct_summary$gaze_condition[i], 
+                correct_summary$task_condition[i], sep = "-")
+  ))
+}
+
+# Add Strategy level
+for(i in 1:nrow(sunburst_data)) {
+  plotly_data <- rbind(plotly_data, data.frame(
+    labels = sunburst_data$instructional_strategy[i],
+    parents = paste("Gaze", sunburst_data$gaze_condition[i], 
+                   sunburst_data$task_condition[i], sep = "-"),
+    values = sunburst_data$duration[i],
+    ids = paste("Gaze", sunburst_data$gaze_condition[i],
+               sunburst_data$task_condition[i],
+               sunburst_data$instructional_strategy[i], sep = "-")
+  ))
+}
+
+# Create color vector
+colors <- c(
+  "white",  # Total
+  "#FFA726", "#42A5F5",  # Gaze Off, On
+  "#FF8A65", "#FFB74D", "#5C6BC0", "#29B6F6",  # Correctness combinations
+  # Strategy combinations
+  "#FFD180", "#81D4FA", "#FF7043",
+  "#FFE082", "#90CAF9", "#FF8A65",
+  "#FFCC80", "#64B5F6", "#FF5722",
+  "#FFE0B2", "#BBDEFB", "#FFAB91"
+)
+
+# Create the plotly sunburst
+p_sunburst <- plot_ly(
+  data = plotly_data,
+  ids = ~ids,
+  labels = ~labels,
+  parents = ~parents,
+  values = ~values,
+  type = 'sunburst',
+  branchvalues = "total",
+  marker = list(colors = colors[1:nrow(plotly_data)]),
+  textinfo = "label+percent parent"
+) %>%
+  layout(
+    title = "Task Duration Hierarchy: Gaze → Correctness → Strategy",
+    margin = list(l = 0, r = 0, t = 50, b = 0)
+  )
+
+print(p_sunburst)
+
+# ============================================================================
+# 4. Alternative approach: Create a proper sunburst with treemapify
+# ============================================================================
+
+
+library(treemapify)
+library(ggplot2)
+
+# Prepare nested data
+nested_data <- sunburst_data %>%
+  mutate(
+    path1 = paste0("Gaze ", gaze_condition),
+    path2 = paste(paste0("Gaze ", gaze_condition), task_condition, sep = " > "),
+    path3 = paste(paste0("Gaze ", gaze_condition), task_condition, instructional_strategy, sep = " > ")
+  )
+
+# Create a treemap as alternative visualization
+treemap_plot <- ggplot(nested_data, aes(
+  area = duration,
+  fill = instructional_strategy,
+  label = paste0(instructional_strategy, "\n", round(duration, 1), "s"),
+  subgroup = task_condition,
+  subgroup2 = gaze_condition
+)) +
+  geom_treemap() +
+  geom_treemap_subgroup2_border(color = "white", size = 3) +
+  geom_treemap_subgroup_border(color = "white", size = 2) +
+  geom_treemap_text(
+    fontface = "bold",
+    colour = "white",
+    place = "centre",
+    grow = FALSE,
+    size = 10
+  ) +
+  geom_treemap_subgroup2_text(
+    place = "top",
+    alpha = 0.7,
+    fontface = "bold",
+    size = 14
+  ) +
+  geom_treemap_subgroup_text(
+    place = "topleft",
+    alpha = 0.5,
+    fontface = "italic",
+    size = 11
+  ) +
+  scale_fill_manual(values = strategy_palette) +
+  labs(
+    title = "Task Duration Treemap",
+    subtitle = "Hierarchical view: Gaze > Correctness > Strategy",
+    fill = "Strategy"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "bottom"
+  )
+
+print(treemap_plot)
+```
+
+
+
+Detect outliers per task_condition + gaze_condition + instructional_strategy
+```{r}
+library(dplyr)
+
+outliers_cond <- task_durations_cond %>%
+  group_by(
+    gaze_condition,
+    task_condition,
+    instructional_strategy
+  ) %>%
+  mutate(
+    Q1    = quantile(mean_task_duration, 0.25),    # lower quartile {🔢} [quantile](https://www.google.com/search?q=R+quantile)
+    Q3    = quantile(mean_task_duration, 0.75),    # upper quartile
+    IQR   = Q3 - Q1,                               # interquartile range
+    lower = Q1 - 1.5 * IQR,                        # whisker lower bound {📏} [IQR method](https://www.google.com/search?q=IQR+outlier+detection)
+    upper = Q3 + 1.5 * IQR                         # whisker upper bound
+  ) %>%
+  filter(
+    mean_task_duration < lower |
+    mean_task_duration > upper
+  ) %>%
+  ungroup() %>%
+  select(
+    subject_id,
+    instructional_strategy,
+    gaze_condition,
+    task_condition,
+    mean_task_duration
+  )
+
+# View the “who” of your outliers:
+print(outliers_cond)
+```
+
+
+
+Don't run this it doesn't work, it's just 
+```{r my_big_plot, fig.width=12, fig.height=6, dpi=300}
+# 0. Load libraries
+library(dplyr)    # data manipulation 🧮 [dplyr group_by](https://www.google.com/search?q=dplyr+group_by)
+library(ggplot2)  # plotting 📊 [ggplot2 boxplot](https://www.google.com/search?q=ggplot2+boxplot)
+
+# 1. Compute per-subject median durations, grouped by strategy × condition × gaze
+task_durations_cond <- combined_segments_per_round_all_dt_merged %>%
+  group_by(
+    subject_id,
+    instructional_strategy,
+    task_condition,
+    gaze_condition      # include for faceting 🔍 [dplyr group_by multiple](https://www.google.com/search?q=dplyr+group_by+multiple)
+  ) %>%
+  summarise(
+    mean_task_duration = median(task_duration, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    instructional_strategy = factor(
+      instructional_strategy,
+      levels = c("Descriptive","Spatial","Minimal")
+    )
+  )
+
+# 2. Detect outliers via boxplot.stats()
+outliers_cond <- task_durations_cond %>%
+  group_split(gaze_condition, task_condition, instructional_strategy) %>%
+  map_dfr(~ {
+    # extract numeric outliers for this group
+    ovals <- boxplot.stats(.x$mean_task_duration)$out
+    filter(.x, mean_task_duration %in% ovals)
+  })
+
+# 2b. Alternatively, IQR‐based detection:
+# outliers_cond_iqr <- task_durations_cond %>%
+#   group_by(gaze_condition, task_condition, instructional_strategy) %>%
+#   mutate(
+#     Q1    = quantile(mean_task_duration, 0.25),
+#     Q3    = quantile(mean_task_duration, 0.75),
+#     IQR   = Q3 - Q1,
+#     lower = Q1 - 1.5 * IQR,
+#     upper = Q3 + 1.5 * IQR
+#   ) %>%
+#   filter(mean_task_duration < lower | mean_task_duration > upper) %>%
+#   ungroup()
+
+# 3. Inspect the outliers
+print(outliers_cond)
+
+# 4. Remove outlier rows from the original data
+clean_data <- combined_segments_per_round_all_dt_merged %>%
+  # drop any record whose median summary is flagged above
+  semi_join(outliers_cond %>%
+              select(subject_id, instructional_strategy, task_condition, gaze_condition) %>%
+              mutate(flag = TRUE),
+            by = c("subject_id", "instructional_strategy", "task_condition", "gaze_condition")) %>%
+  anti_join(
+    outliers_cond %>%
+      select(subject_id, instructional_strategy, task_condition, gaze_condition),
+    by = c("subject_id", "instructional_strategy", "task_condition", "gaze_condition")
+  )
+
+# 5. Recompute medians on cleaned data
+task_durations_clean <- clean_data %>%
+  group_by(
+    subject_id,
+    instructional_strategy,
+    task_condition,
+    gaze_condition
+  ) %>%
+  summarise(
+    mean_task_duration = median(task_duration, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    instructional_strategy = factor(
+      instructional_strategy,
+      levels = c("Descriptive","Spatial","Minimal")
+    )
+  )
+
+# 6. Plot the cleaned boxplot
+ggplot(task_durations_clean,
+       aes(
+         x    = task_condition,
+         y    = mean_task_duration,
+         fill = instructional_strategy
+       )) +
+  geom_boxplot(
+    position = position_dodge(width = 0.8),  # side-by-side boxes
+    width    = 0.6
+  ) +
+  facet_wrap(
+    ~ gaze_condition,
+    ncol   = 2                               # two panels
+  ) +
+  labs(
+    title = "Median Task Duration by Strategy and Task Condition\n(Outlier Removed)",
+    x     = "Task Condition",
+    y     = "Median Duration (s)"
+  ) +
+  scale_fill_manual(values = c(
+    "Descriptive" = "#FFD180",
+    "Spatial"     = "#81D4FA",
+    "Minimal"     = "#FF7043"
+  )) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text      = element_text(size = 12, face = "bold"),
+    plot.title      = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    axis.text.x     = element_text(size = 12, face = "bold"),
+    axis.text.y     = element_text(size = 12)
+  )
+
+```
+
+
+```{r my_big_plot, fig.width=12, fig.height=6, dpi=300}
+# --- Libraries ---------------------------------------------------------------
+library(dplyr)    # wrangling  📚
+library(ggplot2)  # plotting   📊
+library(purrr)    # map_dfr    🧰  # needed for group_split/map_dfr
+# refs: dplyr anti_join 🔗 https://www.google.com/search?q=dplyr+anti_join
+#       ggplot facet_wrap 🔗 https://www.google.com/search?q=ggplot2+facet_wrap
+
+# --- 1) Per-subject medians (strategy × task_condition × gaze) ---------------
+task_durations_cond <- combined_segments_per_round_all_dt_merged %>%
+  group_by(subject_id, instructional_strategy, task_condition, gaze_condition) %>%
+  summarise(mean_task_duration = median(task_duration, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    instructional_strategy = factor(instructional_strategy, levels = c("Descriptive","Spatial","Minimal")),
+    task_condition         = factor(task_condition,         levels = c("Incorrect","Correct")),
+    gaze_condition         = factor(gaze_condition,         levels = c("Off","On"))
+  )
+
+# --- 2) Outliers per group (boxplot.stats) -----------------------------------
+outliers_cond <- task_durations_cond %>%
+  group_split(gaze_condition, task_condition, instructional_strategy) %>%
+  map_dfr(~{
+    outs <- boxplot.stats(.x$mean_task_duration)$out
+    filter(.x, mean_task_duration %in% outs)
+  })
+
+# If you prefer IQR explicitly, uncomment this and use `outliers_cond_iqr` instead:
+# outliers_cond <- task_durations_cond %>%
+#   group_by(gaze_condition, task_condition, instructional_strategy) %>%
+#   mutate(
+#     Q1=quantile(mean_task_duration, .25), Q3=quantile(mean_task_duration, .75),
+#     IQR=Q3-Q1, lower=Q1-1.5*IQR, upper=Q3+1.5*IQR
+#   ) %>% filter(mean_task_duration<lower | mean_task_duration>upper) %>%
+#   ungroup() %>% select(subject_id, instructional_strategy, task_condition, gaze_condition, mean_task_duration)
+
+# Diagnostics
+message("# outliers found: ", nrow(outliers_cond))
+# print(outliers_cond)
+
+# --- 3A) (Recommended) Drop outliers from the *summary* table ----------------
+task_durations_clean <- task_durations_cond %>%
+  anti_join(outliers_cond %>% select(subject_id, instructional_strategy, task_condition, gaze_condition) %>% distinct(),
+            by = c("subject_id","instructional_strategy","task_condition","gaze_condition"))
+
+# --- 3B) (Alternative) Drop from the *raw* data, then re-summarise -----------
+# clean_data <- combined_segments_per_round_all_dt_merged %>%
+#   anti_join(outliers_cond %>% select(subject_id, instructional_strategy, task_condition, gaze_condition) %>% distinct(),
+#             by = c("subject_id","instructional_strategy","task_condition","gaze_condition"))
+# task_durations_clean <- clean_data %>%
+#   group_by(subject_id, instructional_strategy, task_condition, gaze_condition) %>%
+#   summarise(mean_task_duration = median(task_duration, na.rm = TRUE), .groups = "drop")
+
+# Sanity check to avoid empty data → facet error
+stopifnot(nrow(task_durations_clean) > 0)
+
+# --- 4) Plot -----------------------------------------------------------------
+ggplot(task_durations_clean,
+       aes(x = task_condition, y = mean_task_duration, fill = instructional_strategy)) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +
+  facet_wrap(~ gaze_condition, ncol = 2) +
+  labs(
+    title = "Median Task Duration by Strategy and Task Condition (Outliers Removed)",
+    x = "Task Condition", y = "Median Duration (s)"
+  ) +
+  scale_fill_manual(values = c("Descriptive"="#FFD180","Spatial"="#81D4FA","Minimal"="#FF7043")) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        legend.position = "bottom",
+        axis.text.x = element_text(size = 12, face = "bold"),
+        axis.text.y = element_text(size = 12))
+
+```
+
+```{r my_big_plot, fig.width=12, fig.height=6, dpi=300}
+# Ensure desired ordering
+task_durations_clean <- task_durations_clean %>%
+  dplyr::mutate(
+    gaze_condition = factor(gaze_condition, levels = c("Off","On")),
+    task_condition = factor(task_condition, levels = c("Incorrect","Correct")),
+    instructional_strategy = factor(instructional_strategy,
+                                    levels = c("Descriptive","Spatial","Minimal"))
+  )
+
+# ── Option A: SWAP positions → x = Off/On; facet = Incorrect/Correct
+# (keep fill = instructional_strategy)
+p_swapped <- ggplot(task_durations_clean,
+                    aes(x = gaze_condition,
+                        y = mean_task_duration,
+                        fill = instructional_strategy)) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.6) +  # {➡️} [position_dodge](https://www.google.com/search?q=ggplot2+position_dodge)
+  facet_wrap(~ task_condition, ncol = 2) +                              # {🎨} [facet_wrap](https://www.google.com/search?q=ggplot2+facet_wrap)
+  labs(
+    title = "Median Task Duration by Strategy and Gaze, faceted by Correctness",
+    x = "Gaze Condition",
+    y = "Median Duration (s)",
+    fill = "Instructional Strategy"
+  ) +
+  scale_fill_manual(values = c("Descriptive"="#FFD180","Spatial"="#81D4FA","Minimal"="#FF7043")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text      = element_text(size = 12, face = "bold"),
+    plot.title      = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    axis.text.x     = element_text(size = 12, face = "bold"),
+    axis.text.y     = element_text(size = 12)
+  )
+
+print(p_swapped)
+
+# ── Option B: SWAP and show Incorrect/Correct side-by-side inside each Off/On group
+# (fill = task_condition), facet by instructional strategy
+p_swapped_alt <- ggplot(task_durations_clean,
+                        aes(x = gaze_condition,
+                            y = mean_task_duration,
+                            fill = task_condition)) +
+  geom_boxplot(position = position_dodge(width = 0.75), width = 0.6) +
+  facet_wrap(~ instructional_strategy, nrow = 1) +
+  labs(
+    title = "Median Task Duration by Gaze (x) and Correctness (fill), faceted by Strategy",
+    x = "Gaze Condition",
+    y = "Median Duration (s)",
+    fill = "Correctness"
+  ) +
+  scale_fill_manual(values = c("Incorrect" = "#F8766D", "Correct" = "#00BFC4")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text      = element_text(size = 12, face = "bold"),
+    plot.title      = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    axis.text.x     = element_text(size = 12, face = "bold"),
+    axis.text.y     = element_text(size = 12)
+  )
+
+print(p_swapped_alt)
+
+```
+
+
+Detect outliers per task_type + gaze_condition + instructional_strategy
+```{r}
+# Assuming you’ve already built `task_durations_type2` that includes gaze_condition
+outliers_type <- task_durations_type2 %>%
+  group_by(
+    gaze_condition,
+    task_type,
+    instructional_strategy
+  ) %>%
+  mutate(
+    Q1    = quantile(mean_task_duration, 0.25),
+    Q3    = quantile(mean_task_duration, 0.75),
+    IQR   = Q3 - Q1,
+    lower = Q1 - 1.5 * IQR,
+    upper = Q3 + 1.5 * IQR
+  ) %>%
+  filter(
+    mean_task_duration < lower |
+    mean_task_duration > upper
+  ) %>%
+  ungroup() %>%
+  select(
+    subject_id,
+    instructional_strategy,
+    gaze_condition,
+    task_type,
+    mean_task_duration
+  )
+
+print(outliers_type)
+
+```
+
+Okay so a few things
+- This only takes into account when the instructor started speaking and ended, not the actual duration for the task.
+- Start and end are mixed up in the combined thing for some reason
+- So to find the actual task times, we take the start of the task to the start of the next task except for the last one, which we try to use the round end time. Also figure out why round durations don't line up with the task durations. We can technically just look at the words files and calculate the correct time.
+- Need to finish going through instructional strategies csv and segments csv to see for anomalies like wrong labels or wrong timings. 
+- We only need to modify the non-classifying one, the classifying one is bad data.
+- So you can use mean round durations, just keep in mind you will want to reword it later if you do change it and use this one where it would be 
+- Sometimes takes into account either ratings but ALSO you need to make it not take into account the times someone spends just speaking out the prompt text as then you will actually see more extreme differences. So when you do that you should rename this to either the task durations or the duration instructor spent speaking in the TVCG paper.
+Let's see it for just spatial and minimal
+```{r}
+# Filter for Spatial and Minimal instructional strategies
+task_durations_subset <- task_durations %>%
+  filter(instructional_strategy %in% c("Spatial", "Minimal"))
+
+# calculate summary statistics (mean, Q1, Q3)
+summary_data_subset <- task_durations_subset %>%
+  group_by(gaze_condition, instructional_strategy) %>%
+  summarise(
+    mean = median(mean_task_duration),
+    ymin = quantile(mean_task_duration, 0.25),  # Q1
+    ymax = quantile(mean_task_duration, 0.75),  # Q3
+    .groups = 'drop'
+  )
+
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data_subset, aes(x = gaze_condition, y = mean, fill = instructional_strategy),
+           stat = "identity", position = position_dodge(width = 0.9), width = 0.25, color = "black", alpha = 0.7) +
+  
+  # 2. Boxplot elements: IQR and median
+  geom_errorbar(data = summary_data_subset, aes(x = gaze_condition, ymin = ymin, ymax = ymax, group = instructional_strategy),
+                position = position_dodge(width = 0.9), width = 0.2, size = 1) +
+  
+  # 3. Violin plot
+  geom_violin(data = task_durations_subset, aes(x = gaze_condition, y = mean_task_duration, fill = instructional_strategy),
+              position = position_dodge(width = 0.9), trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+  geom_jitter(data = task_durations_subset, aes(x = gaze_condition, y = mean_task_duration, color = instructional_strategy),
+              position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.9), size = 2.5, alpha = 1) +
+  
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  scale_color_manual(values = material_colors) +
+  
+  # Labels
+  labs(title = "Task Duration by Instructional Strategy and Gaze Condition",
+       x = "Gaze Condition", 
+       y = "Mean Task Duration (s)") +
+  
+  # Theme
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 12)
+  )
+
+# So now in the plot we want to swap instructional_strategy and gaze condition so that it's grouped by instructional strategy
+
+
+
+```
+
+
+
+```{r}
+
+subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+combined_segments_per_round_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/timings_updated.csv$") %>%
+  map_dfr(.f = function(timings_updated_path) {
+    print(timings_updated_path)
+    segments_path <- str_replace(timings_updated_path, "timings_updated.csv", "segments.csv")
+    timings <- read_csv(timings_updated_path, show_col_types = FALSE)
+    segments <- read_csv(segments_path, show_col_types = FALSE)
+    
+    # Process segments and join with timings
+    segments_per_round <- segments %>%
+      mutate(text = tolower(text),  # Convert text to lower case
+             text = str_trim(text),  # Trim whitespace
+             text = replace_contraction(text),  # Replace contractions using textclean
+             text = str_replace_all(text, "[[:punct:]]", "")) %>%  # Remove punctuation
+      mutate(across(c(start, end), as.numeric))
+      
+    
+    timings_dt <- setDT(timings)
+    segments_per_round_dt <- setDT(segments_per_round) %>% .[timings_dt, on = .(start <= end, end >= start), allow.cartesian = TRUE]
+    segments_per_round <- segments_per_round_dt %>% as.data.frame()
+        
+      #right_join(timings, by = character()) %>%
+      #filter(start >= start.x & end <= end.x) %>%
+      #select(round, task, start = start.x, end = end.x, text)
+    segments_per_round <- segments_per_round %>% relocate(round, task, start, end, text)
+    # Combine text for each round and task
+    combined_text_per_round <- segments_per_round %>%
+      group_by(round, task, start, end) %>%
+      summarise(combined_text = paste(text, collapse = " "), .groups = 'drop')  # Combine text entries into a single string
+    # Now we just want to add in the subject id to the round and task
+    subject_id <- substr(basename(dirname(timings_updated_path)), 1, 7)
+    combined_text_per_round <- combined_text_per_round %>% mutate(subject_id = subject_id)
+    combined_text_per_round
+  })
+#move subject_id before round
+combined_segments_per_round_all <- combined_segments_per_round_all %>% relocate(subject_id, .before = round)
+combined_segments_per_round_all
+
+# Save the result to a new CSV file
+#write_csv(combined_segments_per_round_all, file.path(path_to_files, "combined_segments_per_round_all.csv"))
+```
 
 
 ```{r}
@@ -571,6 +2293,8 @@ rating_colors <- c(
   "5" = "#424242"   # Material very dark gray (darker)
 )
 
+rating_labels <- c("1 (worst)", "2", "3", "4", "5 (best)")
+
 # Filter the data for Awareness
 awareness_data <- summed_ratings %>% filter(renamed_question == "Awareness")
 # Ensure the rating is a factor with levels ordered from 1 to 5
@@ -579,7 +2303,7 @@ awareness_data$rating <- factor(awareness_data$rating, levels = c("1", "2", "3",
 # Create the plot for Awareness
 awareness_plot <- ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
   geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.5) +  # Adjust bar width
-  scale_fill_manual(values = rating_colors) +
+  scale_fill_manual(values = rating_colors, labels = rating_labels) +
   labs(title = "Awareness Ratings by Gaze Condition", x = "", y = "Awareness") +
   scale_y_discrete(labels = c("off" = "Gaze Off", "on" = "Gaze On")) +
   theme_minimal() +
@@ -595,11 +2319,12 @@ awareness_plot
 awareness_data <- summed_ratings %>% filter(renamed_question == "Awareness")
 awareness_data$rating <- factor(awareness_data$rating, levels = c("1", "2", "3", "4", "5"))
 awareness_plot <- ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
-  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
-  scale_fill_manual(values = rating_colors) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.95, color="black") +
+  scale_fill_manual(values = rating_colors, labels = rating_labels) +
   labs(title = "", x = "", y = "Awareness") +
   scale_y_discrete(labels = c("off" = "Gaze Off", "on" = "Gaze On")) +
   theme_minimal() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)), breaks = seq(0, 150, by = 25)) + # Fixed breaks set to every 20 units up to 150
   theme(legend.position = "top", legend.justification = "center", 
         axis.text.y = element_text(size = 8), 
         axis.title.y = element_text(size = 10))
@@ -609,40 +2334,44 @@ awareness_plot <- ggplot(awareness_data, aes(x = count, y = gaze_condition, fill
 confident_data <- summed_ratings %>% filter(renamed_question == "Confident")
 confident_data$rating <- factor(confident_data$rating, levels = c("1", "2", "3", "4", "5"))
 confident_plot <- ggplot(confident_data, aes(x = count, y = gaze_condition, fill = rating)) +
-  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
-  scale_fill_manual(values = rating_colors) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.95, color="black") +
+  scale_fill_manual(values = rating_colors, labels = rating_labels) +
   labs(title = "", x = "", y = "Confident") +
   theme_minimal() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)), breaks = seq(0, 150, by = 25)) + # Fixed breaks set to every 20 units up to 150
   theme(legend.position = "none")
 
 # Ease
 ease_data <- summed_ratings %>% filter(renamed_question == "Ease")
 ease_data$rating <- factor(ease_data$rating, levels = c("1", "2", "3", "4", "5"))
 ease_plot <- ggplot(ease_data, aes(x = count, y = gaze_condition, fill = rating)) +
-  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
-  scale_fill_manual(values = rating_colors) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.95, color="black") +
+  scale_fill_manual(values = rating_colors, labels = rating_labels) +
   labs(title = "", x = "", y = "Ease") +
   theme_minimal() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)), breaks = seq(0, 150, by = 25)) + # Fixed breaks set to every 20 units up to 150
   theme(legend.position = "none")
 
 # Focus
 focus_data <- summed_ratings %>% filter(renamed_question == "Focus")
 focus_data$rating <- factor(focus_data$rating, levels = c("1", "2", "3", "4", "5"))
 focus_plot <- ggplot(focus_data, aes(x = count, y = gaze_condition, fill = rating)) +
-  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
-  scale_fill_manual(values = rating_colors) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.95, color="black") +
+  scale_fill_manual(values = rating_colors, labels = rating_labels) +
   labs(title = "", x = "", y = "Focus") +
   theme_minimal() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)), breaks = seq(0, 150, by = 25)) + # Fixed breaks set to every 20 units up to 150
   theme(legend.position = "none")
 
 # Predict
 predict_data <- summed_ratings %>% filter(renamed_question == "Predict")
 predict_data$rating <- factor(predict_data$rating, levels = c("1", "2", "3", "4", "5"))
 predict_plot <- ggplot(predict_data, aes(x = count, y = gaze_condition, fill = rating)) +
-  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +
-  scale_fill_manual(values = rating_colors) +
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.95, color="black") +
+  scale_fill_manual(values = rating_colors, labels = rating_labels) +
   labs(title = "", x = "", y = "Predict") +
   theme_minimal() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)), breaks = seq(0, 150, by = 25)) + # Fixed breaks set to every 20 units up to 150
   theme(legend.position = "none")
 
 # Combine plots using patchwork
@@ -672,13 +2401,15 @@ total_responses
 # Filter the data for Awareness
 awareness_data <- summed_ratings %>% filter(renamed_question == "Awareness")
 # Ensure the rating is a factor with levels ordered from 1 to 5
+awareness_data
 awareness_data$rating <- factor(awareness_data$rating, levels = c("1", "2", "3", "4", "5"))
 ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
-  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.9) +  # Adjust bar width
+  geom_bar(stat = "identity", position = position_stack(reverse = TRUE), width = 0.95, color="black") +  # Adjust bar width
   scale_fill_manual(values = rating_colors) +
   labs(title = "", x = "", y = "Awareness") +
   scale_y_discrete(labels = c("off" = "Gaze Off", "on" = "Gaze On")) +
   theme_minimal() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)), breaks = seq(0, 150, by = 25)) + # Fixed breaks set to every 20 units up to 150
   theme(legend.position = "top", legend.justification = "center", 
         axis.text.y = element_text(size = 8),  # Reduce font size
         axis.title.y = element_text(size = 10))
@@ -686,7 +2417,7 @@ ggplot(awareness_data, aes(x = count, y = gaze_condition, fill = rating)) +
 
 TODO: The combined plot needs to have the legend labelled from 1 being the lowest to 5 being the highest.
 
-```{r combined-plot, fig.height=10, fig.width=8}
+```{r combined-plot, fig.height=8, fig.width=8}
 combined_plot <- awareness_plot / confident_plot / ease_plot / focus_plot / predict_plot
 combined_plot
 ```
@@ -694,6 +2425,8 @@ combined_plot
 
 Here we will want to calculate the mean duration of each round for each subject and gaze condition. We will then perform a Wilcoxon signed-rank test to compare the mean durations between the 'Off' and 'On' gaze conditions.
 
+
+--Mean Duration of Each Round by Gaze Condition
 
 ```{r}
 
@@ -760,8 +2493,19 @@ print(paste("Z for Duration:", z_duration))
 ```
 
 
+So now we want similar to wide_mean_durations but we want to use instructional_strategies_data_dt_merged_tt_tc to get the mean duration of each round for each subject and gaze condition and the instructional strategy used.
+```{r}
+
+instructional_strategies_data_dt_merged_tt_tc
+round_durations
+mean_durations
+```
+
+
+
 
 ```{r}
+
 
 # Perform Wilcoxon signed-rank test
 wilcox_test_result <- wilcox.test(
@@ -786,6 +2530,329 @@ ggplot(wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = ga
   theme_minimal() +
   scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
   geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+```
+
+
+
+```{r}
+summary_data <- wide_mean_durations %>%
+  group_by(gaze_condition) %>%
+  summarise(
+    mean = mean(mean_duration),
+    se = sd(mean_duration) / sqrt(n())
+  )
+
+# Define p-value annotation position
+p_value_label <- data.frame(
+  x = 1.5, 
+  y = max(summary_data$mean + summary_data$se) + 10, 
+  label = "p = .004"  # Use formatted p-value manually or dynamically
+)
+
+summary_data
+
+# Create the plot
+ggplot(summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition)) +
+  geom_bar(stat = "identity", width = 0.2, color = "black") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.1) +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "orange")) +
+  geom_text(data = p_value_label, aes(x = x, y = y, label = label), 
+            color = "red", size = 5, fontface = "bold", inherit.aes = FALSE) +
+  annotate("segment", x = 1, xend = 2, y = p_value_label$y - 5, 
+           yend = p_value_label$y - 5, color = "red", size = 1) +
+  labs(title = "Mean Round Durations by Gaze Condition",
+       x = "Gaze Condition", 
+       y = "Mean Duration",
+       fill = NULL) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    legend.position = "none"
+  )
+
+
+
+```
+
+We want to make a nicer plot version.
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Calculate summary statistics (mean and IQR)
+summary_data <- wide_mean_durations %>%
+  group_by(gaze_condition) %>%
+  summarise(
+    mean = median(mean_duration),
+    ymin = quantile(mean_duration, 0.25),  # Q1
+    ymax = quantile(mean_duration, 0.75)   # Q3
+  )
+
+# Correct P-value annotation
+wilcox_test_result <- wilcox.test(
+  wide_mean_durations$mean_duration[wide_mean_durations$gaze_condition == "Off"],
+  wide_mean_durations$mean_duration[wide_mean_durations$gaze_condition == "On"],
+  paired = TRUE
+)
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 350, 
+  label = paste("p =", formatC(wilcox_test_result$p.value, format = "f", digits = 8))
+)
+
+p_value_data$label = "p < 0.001"
+
+# Lighter material colors
+material_colors <- c("Off" = "#FFD180", "On" = "#81D4FA")
+
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition),
+           stat = "identity", width = 0.36, color = "black", alpha = 0.7) +
+  
+  # 2. Boxplot elements: IQR and median
+stat_boxplot(
+  data = wide_mean_durations, 
+  aes(
+    x = gaze_condition, 
+    y = mean_duration,
+    ymin = after_stat(ymin), 
+    ymax = after_stat(ymax)
+  ), 
+  geom = "errorbar",
+  linewidth = 1, 
+  width = 0.15
+) +
+stat_boxplot(
+  data = wide_mean_durations, 
+  aes(
+    x = gaze_condition, 
+    y = mean_duration,
+    ymin = ..middle.., 
+    ymax = ..middle..
+  ), 
+  geom = "errorbar",
+  linewidth = 2, 
+  width = 0.25
+) +
+  # 3. Violin plot
+  geom_violin(data = wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = gaze_condition),
+              trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+geom_jitter(
+  data = wide_mean_durations, 
+  aes(x = gaze_condition, y = mean_duration, color = gaze_condition),
+  width = 0.15, 
+  size = 2.5, 
+  alpha = 1  # Set to 1 for fully opaque points
+) +
+scale_color_manual(values = c("Off" = "#FF8C00", "On" = "#0288D1")) +  # Darker shades of orange and blue
+  
+  # 5. P-value annotation
+  geom_text(data = p_value_data, aes(x = x, y = y+10, label = label), 
+            inherit.aes = FALSE, color = "red", size = 5, fontface = "bold") +
+  annotate("segment", x = 1, xend = 2, y = p_value_data$y - 10, 
+           yend = p_value_data$y - 10, color = "red", size = 1) +
+  
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  
+  # Labels
+  labs(title = "",
+       x = "Gaze Condition", 
+       y = "Mean Duration (s)") +
+  
+  # Theme
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, face = "bold")
+  )
+
+```
+
+
+
+```{r duration-plot, fig.height=3, fig.width=8}
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition),
+           stat = "identity", width = 0.5, color = "black", alpha = 0.7, position = position_dodge2(preserve = "single", padding = 0)) +
+  
+  # 2. Boxplot elements: IQR and median
+
+stat_boxplot(
+  data = wide_mean_durations, 
+  aes(
+    x = gaze_condition, 
+    y = mean_duration,
+    ymin = ..middle.., 
+    ymax = ..middle..
+  ), 
+  geom = "errorbar",
+  linewidth = 2, 
+  width = 0.75
+) +
+  # 3. Violin plot
+  geom_violin(data = wide_mean_durations, aes(x = gaze_condition, y = mean_duration, fill = gaze_condition),
+              trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+geom_jitter(
+  data = wide_mean_durations, 
+  aes(x = gaze_condition, y = mean_duration, color = gaze_condition),
+  width = 0.15, 
+  size = 2.5, 
+  alpha = 1  # Set to 1 for fully opaque points
+) +
+  stat_boxplot(
+  data = wide_mean_durations, 
+  aes(
+    x = gaze_condition, 
+    y = mean_duration,
+    ymin = after_stat(ymin), 
+    ymax = after_stat(ymax)
+  ), 
+  geom = "errorbar",
+  linewidth = 1, 
+  width = 0.15
+) +
+scale_color_manual(values = c("Off" = "#FF8C00", "On" = "#0288D1")) +  # Darker shades of orange and blue
+  
+  # 5. P-value annotation
+  geom_text(data = p_value_data, aes(x = x+0.75, y = y-30, label = label), 
+            inherit.aes = FALSE, color = "red", size = 5, fontface = "bold") +
+  annotate("segment", x = 1, xend = 2, y = p_value_data$y - 10, 
+           yend = p_value_data$y - 10, color = "red", size = 1) +
+  
+  # Scaling
+  scale_y_continuous(breaks = seq(0, 350, by = 50)) +
+
+
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  # Labels
+  labs(title = "",
+       x = "Gaze Condition", 
+       y = "Mean Duration (s)") +
+  
+  # Theme
+  theme_minimal(base_size = 14) +
+  coord_flip() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, face = "bold")
+  )
+```
+
+```{r}
+library(ggplot2)
+
+# Example with flipped axes
+ggplot() +
+  # Horizontal bar elements; flip x and y in aes
+  geom_bar(data = summary_data, aes(y = gaze_condition, x = mean, fill = gaze_condition),
+           stat = "identity", width = 0.5, color = "black", alpha = 0.7, position = position_dodge2(preserve = "single", padding = 0)) +
+  
+  # Horizontal violin plot
+  geom_violin(data = wide_mean_durations, aes(y = gaze_condition, x = mean_duration, fill = gaze_condition),
+              trim = TRUE, alpha = 0.3, color = NA) +
+
+  # Horizontal jittered dots for individual points
+  geom_jitter(
+    data = wide_mean_durations, 
+    aes(y = gaze_condition, x = mean_duration, color = gaze_condition),
+    width = 0.15, 
+    size = 2.5, 
+    alpha = 1
+  ) +
+
+  # Horizontal boxplot elements: error bars
+  geom_errorbar(
+    data = wide_mean_durations, 
+    aes(y = gaze_condition, 
+        xmin = after_stat(ymin), 
+        xmax = after_stat(ymax),
+        x = after_stat(middle)),
+    width = 0.5, 
+    size = 2
+  ) +
+
+  # Additional error bars for IQR
+  geom_errorbar(
+    data = wide_mean_durations, 
+    aes(y = gaze_condition, 
+        xmin = after_stat(ymin), 
+        xmax = after_stat(ymax),
+        x = after_stat(middle)),
+    width = 0.15, 
+    size = 1
+  ) +
+  
+  scale_color_manual(values = c("Off" = "#FF8C00", "On" = "#0288D1")) +
+  scale_fill_manual(values = material_colors) +
+  
+  # Adjust y-axis scaling to be horizontal
+  scale_x_continuous(breaks = seq(0, 350, by = 50)) +
+
+  # Labels for horizontal layout
+  labs(title = "",
+       y = "Gaze Condition", 
+       x = "Mean Duration (s)") +
+
+  # Apply minimal theme and adjust text elements
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "none",
+    axis.text.y = element_text(size = 12, face = "bold")
+  )
+
+```
+
+
+
+```{r}
+library(ggplot2)
+data(mtcars)
+ggplot(wide_mean_durations, aes(x=as.factor(gaze_condition), y=mean_duration)) + 
+  stat_boxplot(aes(ymin = after_stat(ymin), ymax = after_stat(ymax)), geom="errorbar", width=.25) + 
+  stat_boxplot(aes(ymin = after_stat(middle), ymax = after_stat(middle)), geom="errorbar", linewidth=2, width=.25)  + 
+  geom_point(aes(colour=as.factor(gaze_condition)), position=position_jitter(width=.25)) + 
+  theme_classic()
+```
+
+
+```{r}
+summary_data <- wide_mean_durations %>%
+  group_by(gaze_condition) %>%
+  summarise(
+    mean = mean(mean_duration),
+    sd = sd(mean_duration)  # Standard deviation
+  )
+
+# Adjust error bars for SD
+ggplot(summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition)) +
+  geom_bar(stat = "identity", width = 0.8, color = "black") +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.2) +
+  scale_fill_manual(values = c("Off" = "blue", "On" = "orange")) +
+  geom_text(data = p_value_label, aes(x = x, y = y, label = label), 
+            color = "red", size = 5, fontface = "bold", inherit.aes = FALSE) +
+  annotate("segment", x = 1, xend = 2, y = p_value_label$y - 5, 
+           yend = p_value_label$y - 5, color = "red", size = 1) +
+  labs(title = "Mean Round Durations by Gaze Condition",
+       x = "Gaze Condition", 
+       y = "Mean Duration",
+       fill = NULL) +
+  theme_minimal()
 ```
 
 Paper-friendly version of the plot that can be customized.
@@ -886,7 +2953,7 @@ process_directory <- function(directory_path) {
       print("Writing updated timings file...")
       print(file.path(directory_path, "timings_updated.csv"))
       
-      write_csv(timings, file.path(directory_path, "timings_updated.csv"))
+      #write_csv(timings, file.path(directory_path, "timings_updated.csv"))
     }
   }
 }
@@ -962,7 +3029,9 @@ print(timings_path)
 
     word_counts <- word_counts %>%
       mutate(across(c(subject_id, round_id, task_id), as.character))  # Convert keys to character for consistent joining
-
+    #display the types of subject_rounds and word_counts
+    print("Subject Rounds")
+    
     
 
     # Perform the join
@@ -1076,11 +3145,20 @@ TODO: Plot the word counts for each condition and round.
 
 Start off by figuring out % of time they spent looking at the terrain in each condition/task.
 
+Run this code if you are having errors about incompatible join types.
+```{r}
+subject_rounds <- subject_rounds %>%
+  mutate(across(c(round_id, task_id), as.double))  # Convert keys to double
+```
+
 First we do a test with one file
 
 ```{r}
 #subject_rounds
 subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+
+#Change the round_id type to character
+
 terrain_path <- paste0(path_to_files, "DIB-019\\DIB-019_terrain_fixed.csv")
 terrain <- read_csv(terrain_path, na = na_strings, show_col_types = FALSE) %>% clean_names() %>%
       mutate(subject_id = substr(subject_id, 1, 7))
@@ -1176,7 +3254,8 @@ The all files version.
 ```{r}
 
 # Process each terrain file and calculate the average percentage of time looking at the terrain
-subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+subject_rounds_dt <- subject_rounds %>%
+  mutate(across(c(round_id, task_id), as.double)) %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
 average_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3}_terrain_fixed\\.csv$") %>%
   map_dfr(.f = function(terrain_path) {
     print(terrain_path)
@@ -1186,7 +3265,7 @@ average_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = T
       .[round_id != 0]
 
     #terrain_dt <- terrain_dt[subject_rounds, on = c("subject_id", "round_id", "task_id")]
-
+    
     terrain_dt <- merge(terrain_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
 
     # Rename some columns back to where they were before
@@ -1387,7 +3466,12 @@ object_data <- read_csv(object_path, na = na_strings, show_col_types = FALSE) %>
 object_dt <- object_data %>% setDT() %>%
   .[round_id != 0]
 
-object_dt <- merge(object_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+subject_rounds_dt <- subject_rounds %>%
+  mutate(across(c(round_id, task_id), as.double)) %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+# join round_durations on subject_rounds so we can then later convert the percent into an actual duration
+subject_rounds_and_durations_dt <- merge(subject_rounds_dt, round_durations, by = c("subject_id", "round_id"), all.x = TRUE)
+
+object_dt <- merge(object_dt, subject_rounds_and_durations_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
 
 # Rename some columns back to where they were before
 object_dt <- object_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
@@ -1413,7 +3497,8 @@ object_dt_grouped <- object_dt %>%
   summarise(
     total_syncs = n(),  # Total number of sync_id entries
     valid_hits = sum(looking_at_object, na.rm = TRUE),   # Count of entries where looking at object
-    percent_looking_at_object = (valid_hits / total_syncs) * 100  # Calculate percentage
+    percent_looking_at_object = (valid_hits / total_syncs) * 100,  # Calculate percentage
+    time_spent_looking_at_object = round_duration * percent_looking_at_object / 100
   ) %>%
   ungroup()
 
@@ -1421,7 +3506,8 @@ object_dt_grouped <- object_dt %>%
 average_percent_by_condition <- object_dt_grouped %>%
   group_by(subject_id, gaze_condition) %>%
   summarise(
-    average_percent_looking_at_object = median(percent_looking_at_object, na.rm = TRUE)
+    average_percent_looking_at_object = median(percent_looking_at_object, na.rm = TRUE),
+    average_time_spent_looking_at_object = median(time_spent_looking_at_object, na.rm = TRUE)
   ) %>%
   ungroup()
 
@@ -1433,7 +3519,8 @@ Now we do it for all files
 ```{r}
 
 # Process each object file and calculate the average percentage of time looking at the object with eye_angle over 25
-subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+subject_rounds_dt <- subject_rounds %>%
+  mutate(across(c(round_id, task_id), as.double)) %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
 average_object_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/[A-Z]{3}-\\d{3}_object\\.csv$") %>%
   map_dfr(.f = function(object_path) {
     print(object_path)
@@ -1442,8 +3529,10 @@ average_object_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recu
       mutate(subject_id = substr(subject_id, 1, 7))
     object_dt <- object_data %>% setDT() %>%
       .[round_id != 0]
+    # join round_durations on subject_rounds so we can then later convert the percent into an actual duration
+    subject_rounds_and_durations_dt <- merge(subject_rounds_dt, round_durations, by = c("subject_id", "round_id"), all.x = TRUE)
 
-    object_dt <- merge(object_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
+    object_dt <- merge(object_dt, subject_rounds_and_durations_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
 
     # Rename some columns back to where they were before
     object_dt <- object_dt %>% .[, c("gaze_condition", "task_condition") := .(gaze_condition.x, task_condition.x)] %>%
@@ -1469,7 +3558,8 @@ average_object_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recu
       summarise(
         total_syncs = n(),  # Total number of sync_id entries
         valid_hits = sum(looking_at_object, na.rm = TRUE),   # Count of entries where looking at object
-        percent_looking_at_object = (valid_hits / total_syncs) * 100  # Calculate percentage
+        percent_looking_at_object = (valid_hits / total_syncs) * 100,  # Calculate percentage
+        time_spent_looking_at_object = round_duration * percent_looking_at_object / 100
       ) %>%
       ungroup()
 
@@ -1477,7 +3567,8 @@ average_object_percent_by_condition_all <- fs::dir_ls(path = path_to_files, recu
     average_percent_by_condition <- object_dt_grouped %>%
       group_by(subject_id, gaze_condition) %>%
       summarise(
-        average_percent_looking_at_object = median(percent_looking_at_object, na.rm = TRUE)
+        average_percent_looking_at_object = median(percent_looking_at_object, na.rm = TRUE),
+        average_time_spent_looking_at_object = median(time_spent_looking_at_object, na.rm = TRUE)
       ) %>%
       ungroup()
 
@@ -1488,7 +3579,7 @@ average_object_percent_by_condition_all
 
 ```{r}
 # Now pivot it wider
-
+# TODO: Use the average time spent instead of the percentage
 average_object_percent_by_condition_all_wide <- average_object_percent_by_condition_all %>%
   pivot_wider(names_from = gaze_condition, 
               values_from = average_percent_looking_at_object,
@@ -1509,7 +3600,7 @@ average_object_percent_by_condition_all_wide %>%
   scale_fill_manual(values = c("Off" = "blue", "On" = "red"))
 
 ```
-# There might be a significant difference here so let's test it with wilcoxon.
+There might be a significant difference here so let's test it with wilcoxon.
 
 ```{r}
 
@@ -1564,6 +3655,109 @@ ggplot(average_object_percent_by_condition_all, aes(x = gaze_condition, y = aver
 ```
 Defined as anytime the eye gaze ray hit the student collider (capsule collider containing student).
 
+Nicer plot version of percentage looking at student.
+
+```{r duration-plot, fig.height=3, fig.width=8}
+library(ggplot2)
+library(dplyr)
+
+# Calculate summary statistics (mean and IQR)
+summary_data <- average_object_percent_by_condition_all %>%
+  group_by(gaze_condition) %>%
+  summarise(
+    mean = median(average_percent_looking_at_object),
+    ymin = quantile(average_percent_looking_at_object, 0.25),  # Q1
+    ymax = quantile(average_percent_looking_at_object, 0.75)   # Q3
+  )
+
+# Correct P-value annotation
+wilcox_test_result <- wilcox.test(
+  average_object_percent_by_condition_all$average_percent_looking_at_object[average_object_percent_by_condition_all$gaze_condition == "Off"],
+  average_object_percent_by_condition_all$average_percent_looking_at_object[average_object_percent_by_condition_all$gaze_condition == "On"],
+  paired = TRUE
+)
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 100, 
+  label = paste("p =", formatC(wilcox_test_result$p.value, format = "f", digits = 8))
+)
+
+p_value_data$label = "p < 0.001"
+
+# Lighter material colors
+material_colors <- c("Off" = "#FFD180", "On" = "#81D4FA")
+
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition),
+           stat = "identity", width = 0.0, alpha = 0.0) +
+  
+  # 2. Boxplot elements: IQR and median
+stat_boxplot(
+  data = average_object_percent_by_condition_all, 
+  aes(
+    x = gaze_condition, 
+    y = average_percent_looking_at_object,
+    ymin = after_stat(ymin), 
+    ymax = after_stat(ymax)
+  ), 
+  geom = "errorbar",
+  linewidth = 1, 
+  width = 0.15
+) +
+stat_boxplot(
+  data = average_object_percent_by_condition_all, 
+  aes(
+    x = gaze_condition, 
+    y = average_percent_looking_at_object,
+    ymin = ..middle.., 
+    ymax = ..middle..
+  ), 
+  geom = "errorbar",
+  linewidth = 2, 
+  width = 0.5
+) +
+  # 3. Violin plot
+  geom_violin(data = average_object_percent_by_condition_all, aes(x = gaze_condition, y = average_percent_looking_at_object, fill = gaze_condition),
+              trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+geom_jitter(
+  data = average_object_percent_by_condition_all, 
+  aes(x = gaze_condition, y = average_percent_looking_at_object, color = gaze_condition),
+  width = 0.15, 
+  size = 2.5, 
+  alpha = 1  # Set to 1 for fully opaque points
+) +
+scale_color_manual(values = c("Off" = "#FF8C00", "On" = "#0288D1")) +  # Darker shades of orange and blue
+  
+  # 5. P-value annotation
+  geom_text(data = p_value_data, aes(x = x, y = y-2, label = label), 
+            inherit.aes = FALSE, color = "red", size = 5, fontface = "bold") +
+  annotate("segment", x = 1, xend = 2, y = p_value_data$y - 10, 
+           yend = p_value_data$y - 10, color = "red", size = 1) +
+  
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  
+  # Labels
+  labs(title = "",
+       x = "Gaze Condition", 
+       y = "Average Percentage of Time Looking at Student") +
+  
+  # Theme
+  theme_minimal(base_size = 14) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  coord_flip() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, face = "bold")
+  )
+
+```
+
 
 
 We'll check annotations later but now let's check the word count distrbution.
@@ -1571,12 +3765,13 @@ First just check total words per condition
 
 Single file test
 ```{r}
-subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+subject_rounds_dt <- subject_rounds %>%
+  mutate(across(c(round_id, task_id), as.double)) %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
 
 word_count_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/DIB-019/word_counts.csv"
 print(word_count_path)
 
-word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_character(), task_id = col_character())) %>% clean_names() %>%
+word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = FALSE, col_types = cols(round_id = col_double(), task_id = col_double())) %>% clean_names() %>%
   mutate(subject_id = substr(subject_id, 1, 7))
 
 # Remove start_round and end_round columns
@@ -1632,7 +3827,8 @@ All files version
 
 ```{r}
 # Process each word count file and calculate the average word count for each condition
-subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
+subject_rounds_dt <- subject_rounds %>%
+  mutate(across(c(round_id, task_id), as.double)) %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
 average_word_count_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/word_counts\\.csv$") %>%
   map_dfr(.f = function(word_count_path) {
     print(word_count_path)
@@ -1795,6 +3991,109 @@ ggplot(average_word_count_by_condition_all, aes(x = gaze_condition, y = average_
   theme_minimal() +
   scale_fill_manual(values = c("Off" = "blue", "On" = "red")) +
   geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
+```
+
+Now we want nicer plot version
+
+```{r duration-plot, fig.height=3, fig.width=8}
+library(ggplot2)
+library(dplyr)
+
+# Calculate summary statistics (mean and IQR)
+summary_data <- average_word_count_by_condition_all %>%
+  group_by(gaze_condition) %>%
+  summarise(
+    mean = median(average_word_count),
+    ymin = quantile(average_word_count, 0.25),  # Q1
+    ymax = quantile(average_word_count, 0.75)   # Q3
+  )
+
+# Correct P-value annotation
+wilcox_test_result <- wilcox.test(
+  average_word_count_by_condition_all$average_word_count[average_word_count_by_condition_all$gaze_condition == "Off"],
+  average_word_count_by_condition_all$average_word_count[average_word_count_by_condition_all$gaze_condition == "On"],
+  paired = TRUE
+)
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 100, 
+  label = paste("p =", formatC(wilcox_test_result$p.value, format = "f", digits = 8))
+)
+
+p_value_data$label = "p < 0.001"
+
+# Lighter material colors
+material_colors <- c("Off" = "#FFD180", "On" = "#81D4FA")
+
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition),
+           stat = "identity", width = 0.0, alpha = 0.0) +
+  
+  # 2. Boxplot elements: IQR and median
+stat_boxplot(
+  data = average_word_count_by_condition_all, 
+  aes(
+    x = gaze_condition, 
+    y = average_word_count,
+    ymin = after_stat(ymin), 
+    ymax = after_stat(ymax)
+  ), 
+  geom = "errorbar",
+  linewidth = 1, 
+  width = 0.15
+) +
+stat_boxplot(
+  data = average_word_count_by_condition_all, 
+  aes(
+    x = gaze_condition, 
+    y = average_word_count,
+    ymin = ..middle.., 
+    ymax = ..middle..
+  ), 
+  geom = "errorbar",
+  linewidth = 2, 
+  width = 0.5
+) +
+  # 3. Violin plot
+  geom_violin(data = average_word_count_by_condition_all, aes(x = gaze_condition, y = average_word_count, fill = gaze_condition),
+              trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+geom_jitter(
+  data = average_word_count_by_condition_all, 
+  aes(x = gaze_condition, y = average_word_count, color = gaze_condition),
+  width = 0.15, 
+  size = 2.5, 
+  alpha = 1  # Set to 1 for fully opaque points
+) +
+scale_color_manual(values = c("Off" = "#FF8C00", "On" = "#0288D1")) +  # Darker shades of orange and blue
+  
+  # 5. P-value annotation
+  geom_text(data = p_value_data, aes(x = x, y = y-2, label = label), 
+            inherit.aes = FALSE, color = "red", size = 5, fontface = "bold") +
+  annotate("segment", x = 1, xend = 2, y = p_value_data$y - 10, 
+           yend = p_value_data$y - 10, color = "red", size = 1) +
+  
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  
+  # Labels
+  labs(title = "",
+       x = "Gaze Condition", 
+       y = "Average Word Count") +
+  
+  # Theme
+  theme_minimal(base_size = 14) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  coord_flip() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, face = "bold")
+  )
+
 ```
 
 So people spoke less when they saw the student's gaze. Let's see whether this made them give more 'directional' instructions. Let's first check the percentage of directional instructions.
@@ -2013,6 +4312,111 @@ ggplot(average_directional_words_by_condition_all, aes(x = gaze_condition, y = a
   geom_text(data = p_value_data, aes(x = x, y = y, label = label), inherit.aes = FALSE)
 ```
 
+Now we want nicer plot version
+
+```{r duration-plot, fig.height=3, fig.width=8}
+library(ggplot2)
+library(dplyr)
+
+# Calculate summary statistics (mean and IQR)
+summary_data <- average_directional_words_by_condition_all %>%
+  group_by(gaze_condition) %>%
+  summarise(
+    mean = median(average_directional_words),
+    ymin = quantile(average_directional_words, 0.25),  # Q1
+    ymax = quantile(average_directional_words, 0.75)   # Q3
+  )
+
+# Correct P-value annotation
+wilcox_test_result <- wilcox.test(
+  average_directional_words_by_condition_all$average_directional_words[average_directional_words_by_condition_all$gaze_condition == "Off"],
+  average_directional_words_by_condition_all$average_directional_words[average_directional_words_by_condition_all$gaze_condition == "On"],
+  paired = TRUE
+)
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 5, 
+  label = paste("p =", formatC(wilcox_test_result$p.value, format = "f", digits = 8))
+)
+
+# Use the actual p-value from your existing test
+p_value_data$label = paste("p =", formatC(directional_words_wilcox$p, format = "f", digits = 6))
+
+# Lighter material colors
+material_colors <- c("Off" = "#FFD180", "On" = "#81D4FA")
+
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition),
+           stat = "identity", width = 0.0, alpha = 0.0) +
+  
+  # 2. Boxplot elements: IQR and median
+  stat_boxplot(
+    data = average_directional_words_by_condition_all, 
+    aes(
+      x = gaze_condition, 
+      y = average_directional_words,
+      ymin = after_stat(ymin), 
+      ymax = after_stat(ymax)
+    ), 
+    geom = "errorbar",
+    linewidth = 1, 
+    width = 0.15
+  ) +
+  stat_boxplot(
+    data = average_directional_words_by_condition_all, 
+    aes(
+      x = gaze_condition, 
+      y = average_directional_words,
+      ymin = ..middle.., 
+      ymax = ..middle..
+    ), 
+    geom = "errorbar",
+    linewidth = 2, 
+    width = 0.5
+  ) +
+  # 3. Violin plot
+  geom_violin(data = average_directional_words_by_condition_all, aes(x = gaze_condition, y = average_directional_words, fill = gaze_condition),
+              trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+  geom_jitter(
+    data = average_directional_words_by_condition_all, 
+    aes(x = gaze_condition, y = average_directional_words, color = gaze_condition),
+    width = 0.15, 
+    size = 2.5, 
+    alpha = 1  # Set to 1 for fully opaque points
+  ) +
+  scale_color_manual(values = c("Off" = "#FF8C00", "On" = "#0288D1")) +  # Darker shades of orange and blue
+  
+  # 5. P-value annotation
+  geom_text(data = p_value_data, aes(x = x, y = y-0.2, label = label), 
+            inherit.aes = FALSE, color = "red", size = 5, fontface = "bold") +
+  annotate("segment", x = 1, xend = 2, y = p_value_data$y - 0.5, 
+           yend = p_value_data$y - 0.5, color = "red", size = 1) +
+  
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  
+  # Labels
+  labs(title = "",
+       x = "Gaze Condition", 
+       y = "Average Number of Directional Words") +
+  
+  # Theme
+  theme_minimal(base_size = 14) +
+  scale_y_continuous(limits = c(0, 6), breaks = seq(0, 6, 1)) +
+  coord_flip() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, face = "bold")
+  )
+
+
+```
+
 
 We want to do similar things for simple affirmations and negations. Let's first check the percentage of affirmations and negations.
 
@@ -2056,7 +4460,7 @@ Single file test first
 
 subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
 affirmations <- c("yes", "correct", "right", "true", "sure", "okay", "yep", "yeah", "affirmative", "indeed", "absolutely", "agreed", "confirmed", "fine", "good", "great", "right", "understood", "OK", "agreed", "fine", "good")
-negations <- c("no", "incorrect", "wrong", "false", "not", "never", "nope", "nah")
+negations <- c("no", "incorrect", "wrong", "false", "not", "never", "nope", "nah", "but", "although", "however")
 
 word_count_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/DIB-019/word_counts.csv"
 print(word_count_path)
@@ -2065,7 +4469,7 @@ word_count_data <- read_csv(word_count_path, na = na_strings, show_col_types = F
   mutate(subject_id = substr(subject_id, 1, 7))
 
 # Remove start_round and end_round columns
-subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+subject_rounds_dt_word_count <- subject_rounds_dt %>% dplyr::select(-c(round_start, round_end))
 word_count_data
 
 word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
@@ -2121,7 +4525,7 @@ Now we do it for all files
 
 subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
 affirmations <- c("yes", "correct", "right", "true", "sure", "okay", "yep", "yeah", "affirmative", "indeed", "absolutely", "agreed", "confirmed", "fine", "good", "great", "right", "understood", "OK", "agreed", "fine", "good")
-negations <- c("no", "incorrect", "wrong", "false", "not", "never", "nope", "nah")
+negations <- c("no", "incorrect", "wrong", "false", "not", "never", "nope", "nah", "but", "although", "however")
 # Process each word count file and calculate the average percentage of directional words for each condition
 subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
 average_affirmations_negations_by_condition_all <- fs::dir_ls(path = path_to_files, recurse = TRUE, regexp = "[A-Z]{3}-\\d{3}\\/word_counts\\.csv$") %>%
@@ -2131,7 +4535,7 @@ average_affirmations_negations_by_condition_all <- fs::dir_ls(path = path_to_fil
       mutate(subject_id = substr(subject_id, 1, 7))
 
     # Remove start_round and end_round columns
-    subject_rounds_dt_word_count <- subject_rounds_dt %>% select(-c(round_start, round_end))
+    subject_rounds_dt_word_count <- subject_rounds_dt %>% dplyr::select(-c(round_start, round_end))
 
     word_count_dt <- word_count_data %>% setDT() %>% .[round_id != 0]
     word_count_dt <- merge(word_count_dt, subject_rounds_dt_word_count, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
@@ -2261,6 +4665,107 @@ ggplot(average_affirmations_negations_by_condition_all, aes(x = gaze_condition, 
 
 ```
 
+Nicer plot version
+
+```{r duration-plot, fig.height=3, fig.width=8}
+# Calculate summary statistics (mean and IQR)
+summary_data <- average_affirmations_negations_by_condition_all %>%
+  group_by(gaze_condition) %>%
+  summarise(
+    mean = median(average_affirmations),
+    ymin = quantile(average_affirmations, 0.25),  # Q1
+    ymax = quantile(average_affirmations, 0.75)   # Q3
+  )
+
+# Correct P-value annotation
+wilcox_test_result <- wilcox.test(
+  average_affirmations_negations_by_condition_all$average_affirmations[average_affirmations_negations_by_condition_all$gaze_condition == "Off"],
+  average_affirmations_negations_by_condition_all$average_affirmations[average_affirmations_negations_by_condition_all$gaze_condition == "On"],
+  paired = TRUE
+)
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 7, 
+  label = paste("p =", formatC(wilcox_test_result$p.value, format = "f", digits = 8))
+)
+
+# Use the actual p-value from your existing test
+p_value_data$label = paste("p =", formatC(affirmations_wilcox$p, format = "f", digits = 6))
+
+# Lighter material colors
+material_colors <- c("Off" = "#FFD180", "On" = "#81D4FA")
+
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition),
+           stat = "identity", width = 0.0, alpha = 0.0) +
+  
+  # 2. Boxplot elements: IQR and median
+  stat_boxplot(
+    data = average_affirmations_negations_by_condition_all, 
+    aes(
+      x = gaze_condition, 
+      y = average_affirmations,
+      ymin = after_stat(ymin), 
+      ymax = after_stat(ymax)
+    ), 
+    geom = "errorbar",
+    linewidth = 1, 
+    width = 0.15
+  ) +
+  stat_boxplot(
+    data = average_affirmations_negations_by_condition_all, 
+    aes(
+      x = gaze_condition, 
+      y = average_affirmations,
+      ymin = ..middle.., 
+      ymax = ..middle..
+    ), 
+    geom = "errorbar",
+    linewidth = 2, 
+    width = 0.5
+  ) +
+  # 3. Violin plot
+  geom_violin(data = average_affirmations_negations_by_condition_all, aes(x = gaze_condition, y = average_affirmations, fill = gaze_condition),
+              trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+  geom_jitter(
+    data = average_affirmations_negations_by_condition_all, 
+    aes(x = gaze_condition, y = average_affirmations, color = gaze_condition),
+    width = 0.15, 
+    size = 2.5, 
+    alpha = 1  # Set to 1 for fully opaque points
+  ) +
+  scale_color_manual(values = c("Off" = "#FF8C00", "On" = "#0288D1")) +  # Darker shades of orange and blue
+  
+  # 5. P-value annotation
+  geom_text(data = p_value_data, aes(x = x, y = y-0.2, label = label), 
+            inherit.aes = FALSE, color = "red", size = 5, fontface = "bold") +
+  annotate("segment", x = 1, xend = 2, y = p_value_data$y - 0.5, 
+           yend = p_value_data$y - 0.5, color = "red", size = 1) +
+  
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  
+  # Labels
+  labs(title = "",
+       x = "Gaze Condition", 
+       y = "Average Number of Affirmations") +
+  
+  # Theme
+  theme_minimal(base_size = 14) +
+  scale_y_continuous(limits = c(0, 8), breaks = seq(0, 8, 1)) +
+  coord_flip() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, face = "bold")
+  )
+
+```
+
 Now we do the same for negations
 
 ```{r}
@@ -2340,6 +4845,108 @@ ggplot(average_affirmations_negations_by_condition_all, aes(x = gaze_condition, 
 
 ```
 
+
+Now do nicer plot version.
+
+```{r duration-plot, fig.height=3, fig.width=8}
+# Calculate summary statistics (mean and IQR)
+summary_data <- average_affirmations_negations_by_condition_all %>%
+  group_by(gaze_condition) %>%
+  summarise(
+    mean = median(average_negations),
+    ymin = quantile(average_negations, 0.25),  # Q1
+    ymax = quantile(average_negations, 0.75)   # Q3
+  )
+
+# Correct P-value annotation
+wilcox_test_result <- wilcox.test(
+  average_affirmations_negations_by_condition_all$average_negations[average_affirmations_negations_by_condition_all$gaze_condition == "Off"],
+  average_affirmations_negations_by_condition_all$average_negations[average_affirmations_negations_by_condition_all$gaze_condition == "On"],
+  paired = TRUE
+)
+p_value_data <- data.frame(
+  x = 1.5, 
+  y = 3.5, 
+  label = paste("p =", formatC(wilcox_test_result$p.value, format = "f", digits = 8))
+)
+
+# Use the actual p-value from your existing test
+p_value_data$label = paste("p =", formatC(negations_wilcox$p, format = "f", digits = 6))
+
+# Lighter material colors
+material_colors <- c("Off" = "#FFD180", "On" = "#81D4FA")
+
+# Combined Plot
+ggplot() +
+  # 1. Bar plot for means
+  geom_bar(data = summary_data, aes(x = gaze_condition, y = mean, fill = gaze_condition),
+           stat = "identity", width = 0.0, alpha = 0.0) +
+  
+  # 2. Boxplot elements: IQR and median
+  stat_boxplot(
+    data = average_affirmations_negations_by_condition_all, 
+    aes(
+      x = gaze_condition, 
+      y = average_negations,
+      ymin = after_stat(ymin), 
+      ymax = after_stat(ymax)
+    ), 
+    geom = "errorbar",
+    linewidth = 1, 
+    width = 0.15
+  ) +
+  stat_boxplot(
+    data = average_affirmations_negations_by_condition_all, 
+    aes(
+      x = gaze_condition, 
+      y = average_negations,
+      ymin = ..middle.., 
+      ymax = ..middle..
+    ), 
+    geom = "errorbar",
+    linewidth = 2, 
+    width = 0.5
+  ) +
+  # 3. Violin plot
+  geom_violin(data = average_affirmations_negations_by_condition_all, aes(x = gaze_condition, y = average_negations, fill = gaze_condition),
+              trim = TRUE, alpha = 0.3, color = NA) +
+  
+  # 4. Jittered dots for individual points
+  geom_jitter(
+    data = average_affirmations_negations_by_condition_all, 
+    aes(x = gaze_condition, y = average_negations, color = gaze_condition),
+    width = 0.15, 
+    size = 2.5, 
+    alpha = 1  # Set to 1 for fully opaque points
+  ) +
+  scale_color_manual(values = c("Off" = "#FF8C00", "On" = "#0288D1")) +  # Darker shades of orange and blue
+  
+  # 5. P-value annotation
+  geom_text(data = p_value_data, aes(x = x, y = y-0.1, label = label), 
+            inherit.aes = FALSE, color = "red", size = 5, fontface = "bold") +
+  annotate("segment", x = 1, xend = 2, y = p_value_data$y - 0.3, 
+           yend = p_value_data$y - 0.3, color = "red", size = 1) +
+  
+  # Custom colors
+  scale_fill_manual(values = material_colors) +
+  
+  # Labels
+  labs(title = "",
+       x = "Gaze Condition", 
+       y = "Average Number of Corrections") +
+  
+  # Theme
+  theme_minimal(base_size = 14) +
+  scale_y_continuous(limits = c(0, 4), breaks = seq(0, 4, 1)) +
+  coord_flip() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, face = "bold")
+  )
+
+```
+
 Key takeaways -
 - People spoke less overall when they saw the student's gaze
 - People needed to correct the student more when they did not see the student's gaze
@@ -2347,6 +4954,11 @@ Key takeaways -
 - People needed to use more affirmations when they did not see the student's gaze
 - People looked at the student more when they did not see the student's gaze
 - We found decreased usage of descriptive guidance strategies and increased usage of spatial-based and minimal guidance strategies when the student's gaze was visible.
+
+
+
+
+Remove and split the next part if needed.
 
 
 Load up the instructional strategies data
@@ -2457,42 +5069,42 @@ Finally, combine with patchwork.
 Load all the data and combine the segments and timings into one data frame.
 ```{r}
 
-# Load the data
-directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\QWE-042"
-timings_path <- file.path(directory_path, "timings_updated.csv")
-segments_path <- file.path(directory_path, "segments.csv")
+# # Load the data
+# directory_path <- "C:\\Users\\Kit\\OneDrive\\Communication Experiment Data\\Communication Analysis\\_raw data\\QWE-042"
+# timings_path <- file.path(directory_path, "timings_updated.csv")
+# segments_path <- file.path(directory_path, "segments.csv")
 
-timings <- read_csv(timings_path, show_col_types = FALSE)
-segments <- read_csv(segments_path, show_col_types = FALSE)
+# timings <- read_csv(timings_path, show_col_types = FALSE)
+# segments <- read_csv(segments_path, show_col_types = FALSE)
 
-# Process segments and join with timings
-segments_per_round <- segments %>%
-  mutate(text = tolower(text),  # Convert text to lower case
-         text = str_trim(text),  # Trim whitespace
-         text = replace_contraction(text),  # Replace contractions using textclean
-         text = str_replace_all(text, "[[:punct:]]", "")) %>%  # Remove punctuation
-  mutate(across(c(start, end), as.numeric))
+# # Process segments and join with timings
+# segments_per_round <- segments %>%
+#   mutate(text = tolower(text),  # Convert text to lower case
+#          text = str_trim(text),  # Trim whitespace
+#          text = replace_contraction(text),  # Replace contractions using textclean
+#          text = str_replace_all(text, "[[:punct:]]", "")) %>%  # Remove punctuation
+#   mutate(across(c(start, end), as.numeric))
   
 
-timings_dt <- setDT(timings)
-segments_per_round_dt <- setDT(segments_per_round) %>% .[timings_dt, on = .(start <= end, end >= start), allow.cartesian = TRUE]
-segments_per_round <- segments_per_round_dt %>% as.data.frame()
+# timings_dt <- setDT(timings)
+# segments_per_round_dt <- setDT(segments_per_round) %>% .[timings_dt, on = .(start <= end, end >= start), allow.cartesian = TRUE]
+# segments_per_round <- segments_per_round_dt %>% as.data.frame()
     
-  #right_join(timings, by = character()) %>%
-  #filter(start >= start.x & end <= end.x) %>%
-  #select(round, task, start = start.x, end = end.x, text)
-segments_per_round <- segments_per_round %>% relocate(round, task, start, end, text)
-# Combine text for each round and task
-combined_text_per_round <- segments_per_round %>%
-  group_by(round, task, start, end) %>%
-  summarise(combined_text = paste(text, collapse = " "), .groups = 'drop')  # Combine text entries into a single string
+#   #right_join(timings, by = character()) %>%
+#   #filter(start >= start.x & end <= end.x) %>%
+#   #select(round, task, start = start.x, end = end.x, text)
+# segments_per_round <- segments_per_round %>% relocate(round, task, start, end, text)
+# # Combine text for each round and task
+# combined_text_per_round <- segments_per_round %>%
+#   group_by(round, task, start, end) %>%
+#   summarise(combined_text = paste(text, collapse = " "), .groups = 'drop')  # Combine text entries into a single string
 
-combined_text_per_round
-# Save the result to a new CSV file
-#write_csv(combined_text_per_round, file.path(directory_path, "combined_text_per_round.csv"))
+# combined_text_per_round
+# # Save the result to a new CSV file
+# #write_csv(combined_text_per_round, file.path(directory_path, "combined_text_per_round.csv"))
 
-# Print path to confirm where the file is saved
-#print(file.path(directory_path, "segments_per_round.csv"))
+# # Print path to confirm where the file is saved
+# #print(file.path(directory_path, "segments_per_round.csv"))
 
 ```
 
@@ -2538,97 +5150,15 @@ combined_segments_per_round_all <- combined_segments_per_round_all %>% relocate(
 combined_segments_per_round_all
 
 # Save the result to a new CSV file
-write_csv(combined_segments_per_round_all, file.path(path_to_files, "combined_segments_per_round_all.csv"))
+#write_csv(combined_segments_per_round_all, file.path(path_to_files, "combined_segments_per_round_all.csv"))
 ```
 
 We also want to have a file that just is subject_rounds written to a csv file as that includes every subject.
 ```{r}
 subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
 subject_rounds_dt
-write_csv(subject_rounds_dt, file.path(path_to_files, "subject_rounds.csv"))
+#write_csv(subject_rounds_dt, file.path(path_to_files, "subject_rounds.csv"))
 ```
 
 
 
-Now we want to load up instructional_strategies.csv in the root and merge with subject_rounds_dt on round = round_id and task = task_id (the columns in instructional strategies will need to be renamed first)
-
-```{r}
-instructional_strategies_path <- "C:/Users/Kit/OneDrive/Communication Experiment Data/Communication Analysis/_raw data/instructional_strategies.csv"
-subject_rounds_dt <- subject_rounds %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
-instructional_strategies_data <- read_csv(instructional_strategies_path, na = na_strings, show_col_types = FALSE) %>% clean_names()
-instructional_strategies_data <- instructional_strategies_data %>% rename(round_id = round, task_id = task)
-instructional_strategies_data_dt <- instructional_strategies_data %>% setDT() %>% setkey("subject_id", "round_id", "task_id")
-instructional_strategies_data_dt
-instructional_strategies_data_dt_merged <- merge(instructional_strategies_data_dt, subject_rounds_dt, by = c("subject_id", "round_id", "task_id"), all.x = TRUE)
-instructional_strategies_data_dt_merged
-# Rename instructional strategy values 'dir' to 'Spatial', 'min' to 'Minimal', 'Max' to 'Descriptive'
-instructional_strategies_data_dt_merged <- instructional_strategies_data_dt_merged %>%
-  mutate(across(c("instructional_strategy"), ~str_replace_all(., c("dir" = "Spatial", "min" = "Minimal", "max" = "Descriptive"))))
-instructional_strategies_data_dt_merged
-
-# Find all NA values in gaze condition and instructional strategy
-instructional_strategies_data_dt_merged_na <- instructional_strategies_data_dt_merged %>% filter(is.na(gaze_condition) | is.na(instructional_strategy))
-instructional_strategies_data_dt_merged_na
-# now we want to show a multi bar plot of the count of each instructional strategy within each gaze condition (on or off), so it should show on the x-axis On and Off and each bar should be the count of each instructional strategy, also the x-axis gaze group label on/off should be on the bottom)
-instructional_strategies_data_dt_merged %>%
-  ggplot(aes(x = gaze_condition, fill = instructional_strategy)) +
-  geom_bar(position = "dodge") +
-  labs(title = "", x = "Gaze Condition", y = "# of Trials Where Subjects Used This Strategy") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("Off" = "Gaze Off", "On" = "Gaze On"))
-
-```
-
-
-So this gives us a multi group bar chart of the count of each instructional strategy within each gaze condition, but now we want to group it further by the task type (Locate, Alignment, Task) and the task condition. The task type can be figured out from the task_id, specifically if task_id %% 3 == 1 then it is Locate, if task_id %% 3 == 2 then it is Alignment, and if task_id %% 3 == 0 then it is Match. Furthermore, thet ask_condition is already in the correct format. We will want to facet by task type and task condition.
-```{r}
-# Now we want to group it further by the task type and task condition
-instructional_strategies_data_dt_merged_tt_tc <- instructional_strategies_data_dt_merged %>%
-  mutate(task_id = as.numeric(task_id)) %>%
-  setDT() %>% 
-  .[task_id %% 3 == 1, task_type := "Locate"] %>% .[task_id %% 3 == 2, task_type := "Alignment"] %>% .[task_id %% 3 == 0, task_type := "Match"] %>% as.data.frame()
-instructional_strategies_data_dt_merged_tt_tc
-
-# We want to filter out the Locate task from the facet for now. We'll just look at it later individually.
-instructional_strategies_data_dt_merged_tt_tc_nl <- instructional_strategies_data_dt_merged_tt_tc %>% filter(task_type != "Locate")
-instructional_strategies_data_dt_merged_tt_tc_nl
-# Now we want to facet by task type and task condition, the task condition should be labelled from "Correct" to "Student was Correct after instruction"
-# and "Incorrect" to "Student made an Error after instruction", also it would be easier to swap the gaze condition and task condition so the top level group is gaze and the second level group is task condition
-# Now we want to group it further by the task type and task condition
-instructional_strategies_data_dt_merged_tt_tc <- instructional_strategies_data_dt_merged %>%
-  mutate(task_id = as.numeric(task_id)) %>%
-  setDT() %>%
-  .[task_id %% 3 == 1, task_type := "Locate"] %>%
-  .[task_id %% 3 == 2, task_type := "Alignment"] %>%
-  .[task_id %% 3 == 0, task_type := "Match"] %>%
-  as.data.frame()
-instructional_strategies_data_dt_merged_tt_tc
-
-# We want to filter out the Locate task from the facet for now. We'll just look at it later individually.
-instructional_strategies_data_dt_merged_tt_tc_nl <- instructional_strategies_data_dt_merged_tt_tc %>% filter(task_type != "Locate")
-instructional_strategies_data_dt_merged_tt_tc_nl
-
-# Now we want to facet by task type and task condition, the task condition should be labelled from "Correct" to "Student was Correct after instruction"
-# and "Incorrect" to "Student made an Error after instruction", also it would be easier to swap the gaze condition and task condition so the top level group is gaze and the second level group is task condition
-instructional_strategies_data_dt_merged_tt_tc_nl %>%
-  mutate(task_condition = recode(task_condition, 
-                                 "Correct" = "Student Correct", 
-                                 "Incorrect" = "Student Error"),
-         gaze_condition = recode(gaze_condition, 
-                                 "On" = "Gaze On", 
-                                 "Off" = "Gaze Off")) %>%
-  ggplot(aes(x = task_condition, fill = instructional_strategy)) +
-  geom_bar(position = "dodge") +
-  labs(title = "", x = "", y = "# of Trials Where Subjects Used This Strategy") +
-  theme_minimal() +
-  scale_x_discrete(labels = c("Student Correct", "Student Error")) +
-  facet_grid(task_type ~ gaze_condition) +
-  theme(
-    strip.text = element_text(size = 10, face = "bold"),
-    axis.text.x = element_text(size = 10, face = "bold", angle = 45, hjust = 1),
-    axis.text.y = element_text(size = 10, face = "bold"),
-    axis.title = element_text(size = 12, face = "bold"),
-    legend.title = element_text(size = 10, face = "bold"),
-    legend.text = element_text(size = 10)
-  )
-```
